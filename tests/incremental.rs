@@ -148,23 +148,6 @@ fn causal_run_unchanged() {
     assert_eq!(c.final_state.edge_count(), 6);
 }
 
-/// M6's genuine red: threads > 1 must panic until parallel evolve lands.
-#[test]
-#[should_panic(expected = "parallel evolve lands in M6")]
-fn threads_gt1_panics_until_m6() {
-    let rule = parse_rule("{{x,y}}->{{x,y},{y,z}}").unwrap();
-    let init = parse_state("{{0,0}}").unwrap();
-    let _ = evolve_opts(
-        &rule,
-        init,
-        &EvolveOpts {
-            steps: 1,
-            threads: 2,
-            incremental: true,
-        },
-    );
-}
-
 /// Baseline re-pin after the frontier restructuring.
 #[test]
 fn baseline_still_green() {

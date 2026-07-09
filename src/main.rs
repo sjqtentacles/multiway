@@ -1,10 +1,11 @@
 use multiway::causal;
+use multiway::causal::UpdateOrder;
 use multiway::confluence::{check, CheckCfg};
 use multiway::export::bundle_json;
 use multiway::lint::lint;
 use multiway::report;
 use multiway::rule::{parse_rule, parse_state, Rule};
-use multiway::system::evolve;
+use multiway::system::{evolve_opts, EvolveOpts};
 use std::process::exit;
 
 const TEMPLATE: &str = include_str!("../viewer/template.html");
@@ -26,6 +27,10 @@ OPTIONS:
   --json PATH        write the data bundle as JSON
   --html PATH        write a self-contained interactive viewer
   --quiet            suppress the stats table
+  --threads N        parallel evolve workers (default 1; output is
+                     byte-identical for every N)
+  --order MODE       causal updating order: sequential (default) or
+                     standard (maximal disjoint generations)
 
   --check-confluence run critical-pair analysis instead of evolving
   --join-depth N     joinability search depth per side (default 8)
@@ -51,6 +56,8 @@ fn main() {
     let mut mode_confluence = false;
     let mut mode_lint = false;
     let mut check_cfg = CheckCfg::default();
+    let mut threads: usize = 1;
+    let mut order = UpdateOrder::Sequential;
 
     let mut i = 0;
     while i < args.len() {
@@ -96,6 +103,28 @@ fn main() {
             "--quiet" => {
                 quiet = true;
                 i += 1;
+            }
+            "--threads" => {
+                threads = need(i).parse().unwrap_or_else(|_| {
+                    eprintln!("--threads must be an integer");
+                    exit(2);
+                });
+                if threads == 0 {
+                    eprintln!("--threads must be >= 1");
+                    exit(2);
+                }
+                i += 2;
+            }
+            "--order" => {
+                order = match need(i).as_str() {
+                    "sequential" => UpdateOrder::Sequential,
+                    "standard" => UpdateOrder::StandardGenerations,
+                    other => {
+                        eprintln!("unknown --order {:?} (sequential | standard)", other);
+                        exit(2);
+                    }
+                };
+                i += 2;
             }
             "--check-confluence" => {
                 mode_confluence = true;
@@ -191,9 +220,17 @@ fn main() {
         exit(2);
     });
 
-    let mw = evolve(&rule, init.clone(), steps);
+    let mw = evolve_opts(
+        &rule,
+        init.clone(),
+        &EvolveOpts {
+            steps,
+            threads,
+            incremental: true,
+        },
+    );
     let causal_run = if causal_events > 0 {
-        Some(causal::run(&rule, init, causal_events))
+        Some(causal::run_ordered(&rule, init, causal_events, order))
     } else {
         None
     };

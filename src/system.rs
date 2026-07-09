@@ -9,7 +9,7 @@
 use crate::canon::{canonicalize, Canon};
 use crate::det::DetMap;
 use crate::hypergraph::{Edge, State};
-use crate::matcher::{apply_full, delta_matches, find_matches, Match};
+use crate::matcher::{apply_full, delta_matches, find_matches, Application, Match};
 use crate::rule::Rule;
 
 pub struct StateRec {
@@ -72,11 +72,16 @@ pub struct EvolveStats {
     pub full_match_calls: usize,
     /// `delta_matches` invocations.
     pub delta_match_calls: usize,
+    /// Maximum worker threads spawned in any step (0 on the serial path)
+    /// — distinguishes "parallel implemented" from "threads ignored".
+    pub workers_spawned: usize,
 }
 
-/// Evolution options. `threads > 1` panics until the parallel milestone
-/// lands. `incremental: false` selects the reference full-search path
-/// (kept for the bit-identical differential test).
+/// Evolution options. `threads > 1` parallelizes the pure per-child work
+/// (apply + canonicalize, then delta matching) with `std::thread::scope`;
+/// output is byte-identical for every thread count by construction (see
+/// `evolve_opts`). `incremental: false` selects the reference full-search
+/// path (kept for the bit-identical differential test).
 pub struct EvolveOpts {
     /// Multiway BFS depth.
     pub steps: usize,
@@ -107,11 +112,19 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
     )
 }
 
+/// Evolve with options. Parallel discipline (deterministic by
+/// construction):
+///
+/// - **Phase A** fans the pure per-match work (`apply_full` and
+///   `canonicalize`) across scoped workers on round-robin frontier
+///   indices, collected by index;
+/// - **Phase B** replays the bookkeeping (dedup, event ids, tokens,
+///   branchial) serially in `(frontier, match)` order — a pure function
+///   of the index-sorted Phase A results, so the output cannot depend on
+///   thread timing;
+/// - **Phase C** fans out `delta_matches` for the new layer the same way.
 pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySystem {
-    assert!(
-        opts.threads == 1,
-        "parallel evolve lands in M6 (--threads > 1 not yet supported)"
-    );
+    assert!(opts.threads >= 1, "threads must be >= 1");
     let steps = opts.steps;
     let mut mw = MultiwaySystem {
         states: Vec::new(),
@@ -141,16 +154,22 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
     let mut frontier: Vec<(usize, Vec<Match>)> = vec![(0, init_matches)];
     for step in 1..=steps {
         let mut new_layer: Vec<usize> = Vec::new();
-        let mut next_frontier: Vec<(usize, Vec<Match>)> = Vec::new();
         let mut branch_pairs: Vec<(usize, usize)> = Vec::new();
 
-        for (sid, matches) in &frontier {
+        // Phase A: pure per-match work, optionally parallel.
+        let mut expanded: Vec<Vec<(Application, Option<Canon>)>> =
+            phase_a(rule, &mw.states, &frontier, opts.threads, &mut mw.stats);
+
+        // Phase B: serial bookkeeping in (frontier, match) order.
+        // Pending delta computations for Phase C: (cid, fi, mi).
+        let mut pending: Vec<(usize, usize, usize)> = Vec::new();
+        for (fi, (sid, matches)) in frontier.iter().enumerate() {
             let sid = *sid;
             let mut children: Vec<usize> = Vec::new();
 
-            for m in matches {
-                let app = apply_full(&mw.states[sid].state, rule, m);
-                let c = canonicalize(&app.child);
+            for (mi, m) in matches.iter().enumerate() {
+                let app = &expanded[fi][mi].0;
+                let c = expanded[fi][mi].1.as_ref().unwrap();
 
                 // Token flow in canonical-slot coordinates. Matches are
                 // found on the parent's raw representative, so the
@@ -184,20 +203,14 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                         canon_map.insert(c.form.edges.clone(), cid);
                         // Lazy match maintenance: only NEW canonical
                         // states get a match set (merged children are
-                        // never expanded).
-                        let child_matches = if opts.incremental {
-                            mw.stats.delta_match_calls += 1;
-                            delta_matches(rule, matches, m, &app)
-                        } else {
-                            mw.stats.full_match_calls += 1;
-                            find_matches(&app.child, rule)
-                        };
-                        next_frontier.push((cid, child_matches));
+                        // never expanded); computed in Phase C.
+                        pending.push((cid, fi, mi));
+                        let canon = expanded[fi][mi].1.take().unwrap();
                         mw.states.push(StateRec {
                             id: cid,
                             step,
-                            state: app.child,
-                            canon: c,
+                            state: expanded[fi][mi].0.child.clone(),
+                            canon,
                         });
                         new_layer.push(cid);
                         cid
@@ -234,12 +247,128 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         branch_pairs.dedup();
         mw.branchial.extend(branch_pairs);
         mw.layers.push(new_layer);
-        frontier = next_frontier;
+
+        // Phase C: match sets for the new layer, optionally parallel;
+        // assembled in pending (= new-state id) order.
+        frontier = phase_c(rule, &frontier, &expanded, &pending, opts, &mut mw.stats);
         if frontier.is_empty() {
             break;
         }
     }
     mw
+}
+
+/// Phase A: for every frontier state, apply every match and canonicalize
+/// the child. Pure per-item work — workers own round-robin index sets and
+/// return results collected BY INDEX, so the merged vector is identical
+/// for any thread count or scheduling.
+fn phase_a(
+    rule: &Rule,
+    states: &[StateRec],
+    frontier: &[(usize, Vec<Match>)],
+    threads: usize,
+    stats: &mut EvolveStats,
+) -> Vec<Vec<(Application, Option<Canon>)>> {
+    let expand_one = |fi: usize| -> Vec<(Application, Option<Canon>)> {
+        let (sid, matches) = &frontier[fi];
+        let parent = &states[*sid].state;
+        matches
+            .iter()
+            .map(|m| {
+                let app = apply_full(parent, rule, m);
+                let c = canonicalize(&app.child);
+                (app, Some(c))
+            })
+            .collect()
+    };
+
+    let workers = threads.min(frontier.len());
+    if workers <= 1 {
+        return (0..frontier.len()).map(expand_one).collect();
+    }
+    stats.workers_spawned = stats.workers_spawned.max(workers);
+
+    let mut merged: Vec<Vec<(Application, Option<Canon>)>> =
+        (0..frontier.len()).map(|_| Vec::new()).collect();
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..workers)
+            .map(|t| {
+                let expand_one = &expand_one;
+                s.spawn(move || {
+                    let mut out = Vec::new();
+                    let mut fi = t;
+                    while fi < frontier.len() {
+                        out.push((fi, expand_one(fi)));
+                        fi += workers;
+                    }
+                    out
+                })
+            })
+            .collect();
+        for h in handles {
+            for (fi, cands) in h.join().expect("phase A worker panicked") {
+                merged[fi] = cands;
+            }
+        }
+    });
+    merged
+}
+
+/// Phase C: compute the next frontier's match sets (delta or full),
+/// fanned out the same way and assembled in new-state-id order.
+fn phase_c(
+    rule: &Rule,
+    frontier: &[(usize, Vec<Match>)],
+    expanded: &[Vec<(Application, Option<Canon>)>],
+    pending: &[(usize, usize, usize)],
+    opts: &EvolveOpts,
+    stats: &mut EvolveStats,
+) -> Vec<(usize, Vec<Match>)> {
+    let compute_one = |&(cid, fi, mi): &(usize, usize, usize)| -> (usize, Vec<Match>) {
+        let (_, matches) = &frontier[fi];
+        let app = &expanded[fi][mi].0;
+        let ms = if opts.incremental {
+            delta_matches(rule, matches, &matches[mi], app)
+        } else {
+            find_matches(&app.child, rule)
+        };
+        (cid, ms)
+    };
+    if opts.incremental {
+        stats.delta_match_calls += pending.len();
+    } else {
+        stats.full_match_calls += pending.len();
+    }
+
+    let workers = opts.threads.min(pending.len());
+    if workers <= 1 {
+        return pending.iter().map(compute_one).collect();
+    }
+    stats.workers_spawned = stats.workers_spawned.max(workers);
+
+    let mut merged: Vec<Option<(usize, Vec<Match>)>> = vec![None; pending.len()];
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..workers)
+            .map(|t| {
+                let compute_one = &compute_one;
+                s.spawn(move || {
+                    let mut out = Vec::new();
+                    let mut pi = t;
+                    while pi < pending.len() {
+                        out.push((pi, compute_one(&pending[pi])));
+                        pi += workers;
+                    }
+                    out
+                })
+            })
+            .collect();
+        for h in handles {
+            for (pi, entry) in h.join().expect("phase C worker panicked") {
+                merged[pi] = Some(entry);
+            }
+        }
+    });
+    merged.into_iter().map(|e| e.unwrap()).collect()
 }
 
 impl MultiwaySystem {
