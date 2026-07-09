@@ -83,20 +83,36 @@ fn rec(
     }
 }
 
+/// The result of applying a match, with the layout information the
+/// token-event graph and the incremental matcher need.
+pub struct Application {
+    /// The rewritten state: kept edges first (parent order), then the RHS
+    /// edges in rule order.
+    pub child: State,
+    /// `(parent_idx, child_idx)` for every edge that survived, in parent
+    /// order.
+    pub kept: Vec<(usize, usize)>,
+    /// Child indices of the freshly produced RHS edges.
+    pub produced: std::ops::Range<usize>,
+}
+
 /// Apply a match: remove consumed edge instances, append RHS edges with
 /// bound variables, minting fresh vertices for RHS-only variables in
-/// deterministic order.
-pub fn apply(state: &State, rule: &Rule, m: &Match) -> State {
+/// deterministic order. Returns the full layout.
+pub fn apply_full(state: &State, rule: &Rule, m: &Match) -> Application {
     let mut mask = vec![true; state.edges.len()];
     for &i in &m.edge_idx {
         mask[i] = false;
     }
     let mut edges: Vec<Vec<Vertex>> = Vec::with_capacity(state.edges.len() + rule.rhs.len());
+    let mut kept: Vec<(usize, usize)> = Vec::with_capacity(state.edges.len());
     for (i, e) in state.edges.iter().enumerate() {
         if mask[i] {
+            kept.push((i, edges.len()));
             edges.push(e.clone());
         }
     }
+    let produced_start = edges.len();
     let mut binding = m.binding.clone();
     let mut next = state.next_vertex;
     for pe in &rule.rhs {
@@ -112,8 +128,18 @@ pub fn apply(state: &State, rule: &Rule, m: &Match) -> State {
             .collect();
         edges.push(e);
     }
-    State {
-        edges,
-        next_vertex: next,
+    let produced = produced_start..edges.len();
+    Application {
+        child: State {
+            edges,
+            next_vertex: next,
+        },
+        kept,
+        produced,
     }
+}
+
+/// Apply a match, returning only the rewritten state.
+pub fn apply(state: &State, rule: &Rule, m: &Match) -> State {
+    apply_full(state, rule, m).child
 }

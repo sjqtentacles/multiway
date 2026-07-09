@@ -29,3 +29,4 @@ pub mod matcher;
 pub mod report;
 pub mod rule;
 pub mod system;
+pub mod teg;

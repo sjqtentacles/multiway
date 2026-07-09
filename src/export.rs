@@ -117,6 +117,27 @@ pub fn causal_json(c: &CausalRun) -> String {
     )
 }
 
+/// Token-event graph section: multiway-wide causal edges and event-level
+/// branchial pairs. Creator sets are deliberately NOT exported — fixed
+/// schema, byte-stable, and the viewer only draws the two graphs.
+pub fn teg_json(t: &crate::teg::TokenEventGraph) -> String {
+    let causal: Vec<String> = t
+        .causal
+        .iter()
+        .map(|(a, b)| format!("[{},{}]", a, b))
+        .collect();
+    let branchial: Vec<String> = t
+        .branchial_events
+        .iter()
+        .map(|(a, b)| format!("[{},{}]", a, b))
+        .collect();
+    format!(
+        "{{\"causal\":[{}],\"branchialEvents\":[{}]}}",
+        causal.join(","),
+        branchial.join(",")
+    )
+}
+
 pub fn bundle_json(
     rule_text: &str,
     init_text: &str,
@@ -127,11 +148,13 @@ pub fn bundle_json(
         Some(c) => causal_json(c),
         None => "null".to_string(),
     };
+    let teg = crate::teg::build(mw);
     format!(
-        "{{\"rule\":\"{}\",\"init\":\"{}\",\"multiway\":{},\"causal\":{}}}",
+        "{{\"rule\":\"{}\",\"init\":\"{}\",\"multiway\":{},\"teg\":{},\"causal\":{}}}",
         esc(rule_text),
         esc(init_text),
         multiway_json(mw),
+        teg_json(&teg),
         causal_part
     )
 }

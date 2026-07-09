@@ -9,7 +9,7 @@
 use crate::canon::{canonicalize, Canon};
 use crate::det::DetMap;
 use crate::hypergraph::{Edge, State};
-use crate::matcher::{apply, find_matches};
+use crate::matcher::{apply_full, find_matches};
 use crate::rule::Rule;
 
 pub struct StateRec {
@@ -32,9 +32,24 @@ pub struct Event {
     pub step: usize,
 }
 
+/// Per-event token flow, in canonical-slot coordinates. A token is
+/// `(state id, slot)` where `slot` indexes the state's canonical sorted
+/// edge list — the engine's fixed token-identity convention (see `teg`).
+pub struct EventTokens {
+    /// Parent canonical slots consumed (sorted).
+    pub consumed: Vec<usize>,
+    /// Child canonical slots produced (sorted).
+    pub produced: Vec<usize>,
+    /// `(parent_slot, child_slot)` for every edge that rode through
+    /// untouched, in parent-edge order.
+    pub passthrough: Vec<(usize, usize)>,
+}
+
 pub struct MultiwaySystem {
     pub states: Vec<StateRec>,
     pub events: Vec<Event>,
+    /// Token flow per event (parallel to `events`).
+    pub event_tokens: Vec<EventTokens>,
     /// States first reached at each step (layers[0] = [initial]).
     pub layers: Vec<Vec<usize>>,
     /// Branchial pairs: same-step sibling states produced from a common parent.
@@ -50,6 +65,7 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
     let mut mw = MultiwaySystem {
         states: Vec::new(),
         events: Vec::new(),
+        event_tokens: Vec::new(),
         layers: Vec::new(),
         branchial: Vec::new(),
         back_merges: 0,
@@ -78,8 +94,28 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
             let mut children: Vec<usize> = Vec::new();
 
             for m in &matches {
-                let child = apply(&mw.states[sid].state, rule, m);
-                let c = canonicalize(&child);
+                let app = apply_full(&mw.states[sid].state, rule, m);
+                let c = canonicalize(&app.child);
+
+                // Token flow in canonical-slot coordinates. Matches are
+                // found on the parent's raw representative, so the
+                // parent's own edge_slots apply; the child's slots index
+                // the SHARED canonical edge list even when the child
+                // merges (byte-equal forms).
+                let mut consumed: Vec<usize> = m
+                    .edge_idx
+                    .iter()
+                    .map(|&i| mw.states[sid].canon.edge_slots[i])
+                    .collect();
+                consumed.sort_unstable();
+                let mut produced: Vec<usize> =
+                    app.produced.clone().map(|i| c.edge_slots[i]).collect();
+                produced.sort_unstable();
+                let passthrough: Vec<(usize, usize)> = app
+                    .kept
+                    .iter()
+                    .map(|&(pi, ci)| (mw.states[sid].canon.edge_slots[pi], c.edge_slots[ci]))
+                    .collect();
 
                 let cid = match canon_map.get(&c.form.edges) {
                     Some(&cid) => {
@@ -94,7 +130,7 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
                         mw.states.push(StateRec {
                             id: cid,
                             step,
-                            state: child,
+                            state: app.child,
                             canon: c,
                         });
                         new_layer.push(cid);
@@ -108,6 +144,11 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
                     from: sid,
                     to: cid,
                     step,
+                });
+                mw.event_tokens.push(EventTokens {
+                    consumed,
+                    produced,
+                    passthrough,
                 });
                 if !children.contains(&cid) {
                     children.push(cid);
