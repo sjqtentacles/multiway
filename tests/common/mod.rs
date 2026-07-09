@@ -8,5 +8,6 @@
 
 pub mod gen;
 pub mod harness;
+pub mod jsonck;
 pub mod oracle;
 pub mod prng;

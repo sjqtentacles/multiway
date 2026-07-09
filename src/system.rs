@@ -35,7 +35,9 @@ pub struct MultiwaySystem {
     /// Branchial pairs: same-step sibling states produced from a common parent.
     pub branchial: Vec<(usize, usize)>,
     /// Events that merged into a state first reached at an *earlier* step.
-    /// If nonzero, `path_counts` is a lower bound (see comment there).
+    /// If nonzero, `path_counts` no longer aligns with the naive evolution
+    /// tree: it counts walks in the merged DAG, which can over- OR
+    /// under-state per-layer naive counts (see `path_counts`).
     pub back_merges: usize,
 }
 
@@ -141,8 +143,13 @@ impl MultiwaySystem {
     /// initial state — i.e. how many nodes of the naive (unshared)
     /// evolution tree this single node represents. Computed by DP in
     /// event-creation order, which is topological as long as no event
-    /// merges into an earlier layer; with back-merges (`back_merges > 0`)
-    /// treat the counts as lower bounds.
+    /// merges into an earlier layer.
+    ///
+    /// With back-merges (`back_merges > 0`) the DP is NOT a lower bound —
+    /// it counts walks in the merged DAG, which can over- or under-state
+    /// per-layer naive counts (a cyclic merge can even report the initial
+    /// state as having multiple "tree nodes"). Gate any per-layer display
+    /// on `back_merges == 0`.
     pub fn path_counts(&self) -> Vec<u128> {
         let mut p = vec![0u128; self.states.len()];
         if !p.is_empty() {

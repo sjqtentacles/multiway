@@ -6,6 +6,13 @@ use crate::causal::CausalRun;
 use crate::hypergraph::State;
 use crate::system::MultiwaySystem;
 
+/// JSON string escaping, hardened for the `<script>`-embedding context:
+/// `<` becomes `<` so a hostile string can never smuggle a literal
+/// `</script>` into the baked viewer (an HTML entity would corrupt the
+/// JSON; the `\u` escape is legal in both JSON and JS), and U+2028/U+2029
+/// are escaped because they are legal JSON but illegal in JS string
+/// literals under pre-ES2019 parsers. Rule/state notation can't currently
+/// produce any of these — this is defense in depth for future fields.
 fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     for c in s.chars() {
@@ -15,6 +22,9 @@ fn esc(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '<' => out.push_str("\\u003c"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
