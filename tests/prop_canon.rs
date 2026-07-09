@@ -181,3 +181,94 @@ fn causal_deps_hand_verified() {
     assert_eq!(c.n_events, 6);
     assert_eq!(c.deps, vec![(0, 1), (1, 2), (1, 3), (2, 4), (2, 5)]);
 }
+
+// ---------------------------------------------------------------------------
+// Fuel-capped isomorphism (M1)
+
+use common::harness::shrink_state;
+use multiway::canon::{isomorphic_with_budget, IsoResult};
+
+/// Budget semantics pins: pre-checks run BEFORE fuel accounting, so
+/// budget=0 on a pre-check-rejected pair is NotIso, while budget=0 on a
+/// pair that reaches the backtracker is BudgetExhausted — including (a, a).
+#[test]
+fn iso_budget_trivial_cases() {
+    let a = parse_state("{{0,1},{1,2}}").unwrap();
+    let star = parse_state("{{0,1},{0,2}}").unwrap();
+    let bigger = parse_state("{{0,1},{1,2},{2,3}}").unwrap();
+
+    assert_eq!(isomorphic_with_budget(&a, &a, u64::MAX), IsoResult::Iso);
+    assert_eq!(
+        isomorphic_with_budget(&a, &star, u64::MAX),
+        IsoResult::NotIso
+    );
+    // pre-check rejection (edge counts differ): NotIso even with zero fuel
+    assert_eq!(isomorphic_with_budget(&a, &bigger, 0), IsoResult::NotIso);
+    // reaches the backtracker with zero fuel: exhausted, even on (a, a)
+    assert_eq!(
+        isomorphic_with_budget(&a, &a, 0),
+        IsoResult::BudgetExhausted
+    );
+}
+
+/// Unlimited budget must agree with both the boolean API and brute force.
+#[test]
+fn prop_iso_budget_unlimited_agrees() {
+    prop(SEED ^ 4, "prop_iso_budget_unlimited_agrees", |rng, _| {
+        let a = gen_state(rng, &StateCfg::oracle());
+        let b = if rng.chance(1, 2) {
+            let map = gen_renaming(rng, &a, false);
+            rename(&a, &map)
+        } else {
+            gen_state(rng, &StateCfg::oracle())
+        };
+        let bf = iso_bruteforce(&a, &b);
+        let expect = if bf {
+            IsoResult::Iso
+        } else {
+            IsoResult::NotIso
+        };
+        assert_eq!(isomorphic_with_budget(&a, &b, u64::MAX), expect);
+        assert_eq!(isomorphic(&a, &b), bf);
+    });
+}
+
+/// Build the Θ(m!) witness: an out-star with m spokes plus a 2-edge tail
+/// hanging off spoke 1; the pair differs only in the tail's final edge
+/// direction, so the backtracker churns through spoke pairings before
+/// every branch dies at the tail.
+fn star_pair(m: u32) -> (multiway::hypergraph::State, multiway::hypergraph::State) {
+    use multiway::hypergraph::State;
+    let mut ea: Vec<Vec<u32>> = (1..=m).map(|i| vec![0, i]).collect();
+    let mut eb = ea.clone();
+    ea.push(vec![1, m + 1]);
+    ea.push(vec![m + 1, m + 2]);
+    eb.push(vec![1, m + 1]);
+    eb.push(vec![m + 2, m + 1]); // reversed tail edge
+    (State::new(ea), State::new(eb))
+}
+
+/// The blowup is real (documented in code, not folklore): at m=10 a
+/// 10_000-node budget exhausts; the m=4 shrunken variant fits the
+/// brute-force oracle and is genuinely non-isomorphic.
+#[test]
+fn iso_budget_exhausts_on_pathological_stars() {
+    let (a10, b10) = star_pair(10);
+    assert_eq!(
+        isomorphic_with_budget(&a10, &b10, 10_000),
+        IsoResult::BudgetExhausted
+    );
+
+    let (a4, b4) = star_pair(4); // 7 vertices: oracle-checkable
+    assert!(!iso_bruteforce(&a4, &b4));
+    assert_eq!(
+        isomorphic_with_budget(&a4, &b4, u64::MAX),
+        IsoResult::NotIso
+    );
+
+    // shrink_state smoke: dropping any edge from the m=4 witness makes the
+    // pair distinguishable cheaply or changes edge counts — the shrinker
+    // must terminate and return a state that still "fails" its predicate.
+    let shrunk = shrink_state(a4.clone(), |s| s.edge_count() >= 2);
+    assert_eq!(shrunk.edge_count(), 2);
+}

@@ -78,25 +78,47 @@ pub fn wl_hash(state: &State) -> u64 {
     hash_seq(&eh)
 }
 
-/// Exact isomorphism check: is there a vertex bijection under which the
-/// edge multisets coincide? Backtracks over edge-to-edge assignments,
-/// maintaining the bijection in both directions. Exponential in the worst
-/// case; run it only inside a WL-hash bucket.
-pub fn isomorphic(a: &State, b: &State) -> bool {
+/// Outcome of a budgeted isomorphism check.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum IsoResult {
+    /// A vertex bijection exists.
+    Iso,
+    /// Proven non-isomorphic (search exhausted or pre-checks failed).
+    NotIso,
+    /// The backtracking budget ran out before a verdict.
+    BudgetExhausted,
+}
+
+/// Exact isomorphism check with a fuel cap.
+///
+/// `budget` counts backtracking node visits (one unit per `go` entry).
+/// The backtracker is exponential in the worst case — see the pathological
+/// star-pair witness in `tests/prop_canon.rs`, which burns Θ(m!) visits —
+/// so callers that cannot tolerate unbounded latency cap it and handle
+/// [`IsoResult::BudgetExhausted`].
+///
+/// Pinned semantics: the cheap pre-checks (edge count, vertex count, arity
+/// profile) run *before* fuel accounting, so a pre-check-rejected pair
+/// returns `NotIso` even with `budget = 0`, while any pair reaching the
+/// backtracker with `budget = 0` — including `(a, a)` — returns
+/// `BudgetExhausted`.
+pub fn isomorphic_with_budget(a: &State, b: &State, budget: u64) -> IsoResult {
     if a.edges.len() != b.edges.len() {
-        return false;
+        return IsoResult::NotIso;
     }
     if a.vertices().len() != b.vertices().len() {
-        return false;
+        return IsoResult::NotIso;
     }
     let mut aa: Vec<usize> = a.edges.iter().map(|e| e.len()).collect();
     let mut bb: Vec<usize> = b.edges.iter().map(|e| e.len()).collect();
     aa.sort_unstable();
     bb.sort_unstable();
     if aa != bb {
-        return false;
+        return IsoResult::NotIso;
     }
 
+    /// `Some(found)` on a verdict, `None` on fuel exhaustion (mappings are
+    /// unwound before propagating so the caller sees clean state).
     fn go(
         k: usize,
         a: &State,
@@ -104,9 +126,14 @@ pub fn isomorphic(a: &State, b: &State) -> bool {
         used: &mut [bool],
         f: &mut HashMap<Vertex, Vertex>,
         g: &mut HashMap<Vertex, Vertex>,
-    ) -> bool {
+        fuel: &mut u64,
+    ) -> Option<bool> {
+        if *fuel == 0 {
+            return None;
+        }
+        *fuel -= 1;
         if k == a.edges.len() {
-            return true;
+            return Some(true);
         }
         let ea = &a.edges[k];
         for bi in 0..b.edges.len() {
@@ -138,8 +165,17 @@ pub fn isomorphic(a: &State, b: &State) -> bool {
             }
             if ok {
                 used[bi] = true;
-                if go(k + 1, a, b, used, f, g) {
-                    return true;
+                match go(k + 1, a, b, used, f, g, fuel) {
+                    Some(true) => return Some(true),
+                    Some(false) => {}
+                    None => {
+                        used[bi] = false;
+                        for (x, y) in added {
+                            f.remove(&x);
+                            g.remove(&y);
+                        }
+                        return None;
+                    }
                 }
                 used[bi] = false;
             }
@@ -148,11 +184,29 @@ pub fn isomorphic(a: &State, b: &State) -> bool {
                 g.remove(&y);
             }
         }
-        false
+        Some(false)
     }
 
     let mut used = vec![false; b.edges.len()];
     let mut f = HashMap::new();
     let mut g = HashMap::new();
-    go(0, a, b, &mut used, &mut f, &mut g)
+    let mut fuel = budget;
+    match go(0, a, b, &mut used, &mut f, &mut g, &mut fuel) {
+        Some(true) => IsoResult::Iso,
+        Some(false) => IsoResult::NotIso,
+        None => IsoResult::BudgetExhausted,
+    }
+}
+
+/// Exact isomorphism check: is there a vertex bijection under which the
+/// edge multisets coincide? Backtracks over edge-to-edge assignments,
+/// maintaining the bijection in both directions. Exponential in the worst
+/// case; run it only inside a WL-hash bucket (or use
+/// [`isomorphic_with_budget`] where latency must be bounded).
+///
+/// NOTE: `evolve` deliberately stays on this unbudgeted form — budget
+/// exhaustion inside dedup would silently duplicate states and corrupt
+/// layer counts.
+pub fn isomorphic(a: &State, b: &State) -> bool {
+    isomorphic_with_budget(a, b, u64::MAX) == IsoResult::Iso
 }
