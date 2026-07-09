@@ -1,0 +1,6 @@
+target/
+*.png
+!docs/*.png
+demo.json
+demo.html
+.claude/

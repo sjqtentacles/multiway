@@ -1,0 +1,42 @@
+//! Hypergraph states: multisets of ordered hyperedges over integer vertices.
+
+pub type Vertex = u32;
+
+/// An ordered hyperedge. `vec![a, b]` is a directed binary edge a -> b;
+/// arity 1 and arity >= 3 edges are equally valid.
+pub type Edge = Vec<Vertex>;
+
+/// A hypergraph state. Semantically a *multiset* of hyperedges —
+/// duplicate edges are distinct instances. `next_vertex` is the counter
+/// used to mint fresh vertices when a rule's right-hand side introduces
+/// new ones.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct State {
+    pub edges: Vec<Edge>,
+    pub next_vertex: Vertex,
+}
+
+impl State {
+    pub fn new(edges: Vec<Edge>) -> Self {
+        let next_vertex = edges
+            .iter()
+            .flatten()
+            .copied()
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
+        State { edges, next_vertex }
+    }
+
+    /// Sorted, deduplicated vertex set (vertices exist only via edges).
+    pub fn vertices(&self) -> Vec<Vertex> {
+        let mut vs: Vec<Vertex> = self.edges.iter().flatten().copied().collect();
+        vs.sort_unstable();
+        vs.dedup();
+        vs
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+}

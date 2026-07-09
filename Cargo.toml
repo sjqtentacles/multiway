@@ -1,0 +1,15 @@
+[package]
+name = "multiway"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.63"
+description = "A multiway hypergraph rewriting engine with e-graph-style state sharing"
+license = "MIT"
+repository = "https://github.com/sjqtentacles/multiway"
+readme = "README.md"
+authors = ["sjqtentacles <programminglinguist@gmail.com>"]
+keywords = ["hypergraph", "rewriting", "wolfram-model", "e-graph", "isomorphism"]
+categories = ["science", "mathematics", "algorithms"]
+
+[profile.release]
+opt-level = 3

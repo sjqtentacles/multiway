@@ -1,0 +1,4 @@
+# Golden-file byte-equality tests require LF everywhere; Windows CI runners
+# ship core.autocrlf=true, which would rewrite goldens on checkout.
+* text=auto eol=lf
+*.png binary

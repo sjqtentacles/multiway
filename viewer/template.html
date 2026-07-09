@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>multiway — hypergraph multiway explorer</title>
+<style>
+  .viz-root {
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --ink-1: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;   /* states / events */
+    --series-2: #1baf7a;   /* causal accent */
+    --series-3: #eda100;   /* initial condition */
+    --series-5: #4a3aa7;   /* branchial */
+    --ramp-0: #86b6ef; --ramp-1: #5598e7; --ramp-2: #3987e5;
+    --ramp-3: #2a78d6; --ramp-4: #256abf; --ramp-5: #1c5cab; --ramp-6: #184f95;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --ink-1: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #199e70;
+      --series-3: #c98500;
+      --series-5: #9085e9;
+      --ramp-0: #cde2fb; --ramp-1: #9ec5f4; --ramp-2: #6da7ec;
+      --ramp-3: #3987e5; --ramp-4: #256abf; --ramp-5: #1c5cab; --ramp-6: #184f95;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body.viz-root {
+    background: var(--page);
+    color: var(--ink-1);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    padding: 10px 16px 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; font-weight: 650; letter-spacing: .01em; }
+  header .rule {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch;
+  }
+  header .stats { margin-left: auto; display: flex; gap: 14px; color: var(--ink-2); font-size: 12px; }
+  header .stats b { color: var(--ink-1); font-weight: 650; font-variant-numeric: tabular-nums; }
+  nav {
+    display: flex; align-items: center; gap: 4px;
+    padding: 6px 16px; border-bottom: 1px solid var(--border);
+  }
+  nav button {
+    font: inherit; color: var(--ink-2); background: none; border: 1px solid transparent;
+    border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  }
+  nav button:hover { color: var(--ink-1); }
+  nav button[aria-selected="true"] {
+    color: var(--ink-1); border-color: var(--border); background: var(--surface-1); font-weight: 600;
+  }
+  nav .legend { margin-left: auto; display: flex; gap: 16px; color: var(--ink-muted); font-size: 12px; align-items: center; }
+  nav .legend .sw { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: var(--surface-1); cursor: grab; }
+  #stage canvas.dragging { cursor: grabbing; }
+  aside {
+    width: 340px; border-left: 1px solid var(--border);
+    padding: 12px 14px; overflow: auto; background: var(--page);
+  }
+  aside h2 { font-size: 12px; font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+  aside .meta { color: var(--ink-2); font-size: 12px; margin-bottom: 8px; }
+  aside .meta b { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  #inspector { width: 100%; height: 300px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; }
+  aside details { margin-top: 10px; color: var(--ink-2); }
+  aside summary { cursor: pointer; font-size: 12px; }
+  aside pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    color: var(--ink-2); white-space: pre-wrap; word-break: break-all; margin-top: 6px;
+  }
+  #tip {
+    position: absolute; pointer-events: none; display: none; z-index: 5;
+    background: var(--surface-1); color: var(--ink-1);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+    font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.25);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  footer { padding: 5px 16px; color: var(--ink-muted); font-size: 11.5px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body class="viz-root">
+<header>
+  <h1>multiway</h1>
+  <span class="rule" id="ruleText" title=""></span>
+  <div class="stats" id="stats"></div>
+</header>
+<nav>
+  <button id="tabMw" aria-selected="true">Multiway graph</button>
+  <button id="tabCa" aria-selected="false">Causal graph</button>
+  <div class="legend" id="legend"></div>
+</nav>
+<main>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="tip"></div>
+  </div>
+  <aside>
+    <h2>Inspector</h2>
+    <div class="meta" id="meta">Click a state to inspect its hypergraph.</div>
+    <canvas id="inspector" width="620" height="600"></canvas>
+    <details><summary>Edge list</summary><pre id="edgeDump"></pre></details>
+  </aside>
+</main>
+<footer>drag to pan · scroll to zoom · double-click to reset · click a state to inspect</footer>
+
+<script>
+const DATA = __DATA_JSON__;
+
+/* ---------- theme tokens (read live so scheme switches re-style) ---------- */
+function tok(name) { return getComputedStyle(document.body).getPropertyValue(name).trim(); }
+const RAMP_N = 7;
+function stepColor(step, maxStep) {
+  const i = maxStep <= 0 ? 3 : Math.round(step / maxStep * (RAMP_N - 1));
+  return tok('--ramp-' + Math.max(0, Math.min(RAMP_N - 1, i)));
+}
+const fmt = s => { try { return BigInt(s).toLocaleString('en-US'); } catch (e) { return String(s); } };
+
+/* ---------- header ---------- */
+const MW = DATA.multiway;
+const maxStep = MW.layers.length - 1;
+document.getElementById('ruleText').textContent = DATA.rule + '   from ' + DATA.init;
+document.getElementById('ruleText').title = DATA.rule + ' from ' + DATA.init;
+(function stats() {
+  const last = MW.sharing[MW.sharing.length - 1];
+  const ratio = last.canonical ? (Number(last.treeNodes) / last.canonical) : 1;
+  document.getElementById('stats').innerHTML =
+    '<span><b>' + MW.states.length.toLocaleString('en-US') + '</b> canonical states</span>' +
+    '<span><b>' + MW.events.length.toLocaleString('en-US') + '</b> events</span>' +
+    '<span><b>' + MW.branchial.length.toLocaleString('en-US') + '</b> branchial pairs</span>' +
+    '<span>depth ' + last.step + ': <b>' + fmt(last.treeNodes) + '</b> tree nodes → <b>' +
+    last.canonical.toLocaleString('en-US') + '</b> shared (<b>' + ratio.toFixed(1) + '×</b>)</span>';
+})();
+
+/* ---------- layouts ---------- */
+function layeredLayout(nodes, edges, colOf, W, H) {
+  const pad = { x: 70, y: 34 };
+  const nCols = Math.max(...nodes.map(colOf)) + 1;
+  const cols = Array.from({ length: nCols }, () => []);
+  nodes.forEach(n => cols[colOf(n)].push(n));
+  const colX = c => nCols === 1 ? W / 2 : pad.x + c * (W - 2 * pad.x) / (nCols - 1);
+  // initial order = insertion; refine with 3 barycenter sweeps over parents
+  const parents = new Map(); nodes.forEach(n => parents.set(n.id, []));
+  edges.forEach(e => { if (parents.has(e.to)) parents.get(e.to).push(e.from); });
+  const pos = new Map();
+  for (let sweep = 0; sweep < 3; sweep++) {
+    cols.forEach((col, c) => {
+      if (sweep > 0 && c > 0) {
+        col.sort((a, b) => {
+          const ya = avg(parents.get(a.id).map(p => pos.get(p) ? pos.get(p).y : 0));
+          const yb = avg(parents.get(b.id).map(p => pos.get(p) ? pos.get(p).y : 0));
+          return ya - yb;
+        });
+      }
+      const n = col.length;
+      col.forEach((node, i) => {
+        pos.set(node.id, { x: colX(c), y: pad.y + (i + 1) * (H - 2 * pad.y) / (n + 1), col: c, row: i, colSize: n });
+      });
+    });
+  }
+  return pos;
+}
+function avg(a) { return a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0; }
+
+/* ---------- main canvas with pan/zoom ---------- */
+const cv = document.getElementById('cv'), stage = document.getElementById('stage'), tip = document.getElementById('tip');
+const view = { k: 1, tx: 0, ty: 0 };
+let mode = 'mw';          // 'mw' | 'ca'
+let selected = null;      // selected state id (mw mode)
+let hover = null;
+let mwPos = null, caPos = null, caNodes = null, caDepth = null;
+
+function sizeCanvas(c) {
+  const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  c.width = Math.max(1, r.width * dpr); c.height = Math.max(1, r.height * dpr);
+  return { w: r.width, h: r.height, dpr };
+}
+function nodeRadius(colSize, H) { return Math.max(2.5, Math.min(9, (H / Math.max(1, colSize)) * 0.22)); }
+
+function computeLayouts() {
+  const r = cv.getBoundingClientRect(), W = r.width, H = r.height;
+  mwPos = layeredLayout(MW.states, MW.events, s => s.step, W, H);
+  if (DATA.causal) {
+    caNodes = Array.from({ length: DATA.causal.nEvents }, (_, i) => ({ id: i }));
+    caDepth = new Array(DATA.causal.nEvents).fill(0);
+    DATA.causal.deps.forEach(([a, b]) => { caDepth[b] = Math.max(caDepth[b], caDepth[a] + 1); });
+    caPos = layeredLayout(caNodes, DATA.causal.deps.map(([a, b]) => ({ from: a, to: b })), n => caDepth[n.id], W, H);
+  }
+}
+
+function draw() {
+  const { w: W, h: H, dpr } = sizeCanvas(cv);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = tok('--surface-1'); g.fillRect(0, 0, W, H);
+  g.save(); g.translate(view.tx, view.ty); g.scale(view.k, view.k);
+  if (mode === 'mw') drawMultiway(g, W, H); else drawCausal(g, W, H);
+  g.restore();
+}
+
+function drawMultiway(g, W, H) {
+  const pos = mwPos;
+  // column captions
+  g.fillStyle = tok('--ink-muted'); g.font = '11px system-ui, sans-serif'; g.textAlign = 'center';
+  for (let s = 0; s <= maxStep; s++) {
+    const any = MW.layers[s][0];
+    if (any !== undefined) g.fillText('step ' + s, pos.get(any).x, 16);
+  }
+  // event edges
+  g.lineWidth = 1;
+  MW.events.forEach(e => {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    const hi = hover !== null && (e.from === hover || e.to === hover);
+    g.strokeStyle = hi ? tok('--series-1') : tok('--baseline');
+    g.globalAlpha = hi ? 0.9 : 0.35;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.bezierCurveTo((a.x + b.x) / 2, a.y, (a.x + b.x) / 2, b.y, b.x, b.y);
+    g.stroke();
+  });
+  // branchial pairs (dashed, same-column arcs)
+  g.setLineDash([3, 3]); g.strokeStyle = tok('--series-5');
+  MW.branchial.forEach(([ia, ib]) => {
+    const a = pos.get(ia), b = pos.get(ib);
+    const hi = hover !== null && (ia === hover || ib === hover);
+    g.globalAlpha = hi ? 0.9 : 0.16;
+    const bulge = 14 + Math.abs(b.y - a.y) * 0.10;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.quadraticCurveTo(a.x + bulge, (a.y + b.y) / 2, b.x, b.y);
+    g.stroke();
+  });
+  g.setLineDash([]); g.globalAlpha = 1;
+  // nodes
+  MW.states.forEach(s => {
+    const p = pos.get(s.id), r = nodeRadius(p.colSize, H);
+    g.fillStyle = stepColor(s.step, maxStep);
+    g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill();
+    if (s.id === selected || s.id === hover) {
+      g.strokeStyle = tok('--ink-1'); g.lineWidth = 2 / view.k;
+      g.beginPath(); g.arc(p.x, p.y, r + 2, 0, 7); g.stroke();
+    }
+  });
+}
+
+function drawCausal(g, W, H) {
+  if (!DATA.causal) return;
+  const pos = caPos;
+  g.fillStyle = tok('--ink-muted'); g.font = '11px system-ui, sans-serif'; g.textAlign = 'center';
+  g.fillText('causal DAG of one evolution — event 0 is the initial condition', W / 2, 16);
+  g.lineWidth = 1.2;
+  DATA.causal.deps.forEach(([a, b]) => {
+    const pa = pos.get(a), pb = pos.get(b);
+    const hi = hover !== null && (a === hover || b === hover);
+    g.strokeStyle = hi ? tok('--series-2') : tok('--baseline');
+    g.globalAlpha = hi ? 0.95 : 0.4;
+    g.beginPath();
+    g.moveTo(pa.x, pa.y);
+    g.bezierCurveTo((pa.x + pb.x) / 2, pa.y, (pa.x + pb.x) / 2, pb.y, pb.x, pb.y);
+    g.stroke();
+    // arrowhead
+    const ang = Math.atan2(pb.y - pa.y, (pb.x - pa.x) * 0.4 + 1e-6);
+    g.beginPath();
+    g.moveTo(pb.x, pb.y);
+    g.lineTo(pb.x - 7 * Math.cos(ang - 0.4), pb.y - 7 * Math.sin(ang - 0.4));
+    g.lineTo(pb.x - 7 * Math.cos(ang + 0.4), pb.y - 7 * Math.sin(ang + 0.4));
+    g.closePath();
+    g.fillStyle = g.strokeStyle; g.fill();
+  });
+  g.globalAlpha = 1;
+  caNodes.forEach(n => {
+    const p = pos.get(n.id), r = Math.max(3.5, Math.min(8, nodeRadius(p.colSize, H)));
+    g.fillStyle = n.id === 0 ? tok('--series-3') : tok('--series-2');
+    g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill();
+    if (n.id === hover) {
+      g.strokeStyle = tok('--ink-1'); g.lineWidth = 2 / view.k;
+      g.beginPath(); g.arc(p.x, p.y, r + 2, 0, 7); g.stroke();
+    }
+  });
+}
+
+/* ---------- interaction ---------- */
+function toWorld(mx, my) { return { x: (mx - view.tx) / view.k, y: (my - view.ty) / view.k }; }
+function pick(mx, my) {
+  const w = toWorld(mx, my), pos = mode === 'mw' ? mwPos : caPos;
+  if (!pos) return null;
+  let best = null, bd = 121; // 11px picking radius (squared)
+  pos.forEach((p, id) => {
+    const d = (p.x - w.x) * (p.x - w.x) + (p.y - w.y) * (p.y - w.y);
+    if (d < bd) { bd = d; best = id; }
+  });
+  return best;
+}
+let dragging = false, moved = false, lx = 0, ly = 0;
+cv.addEventListener('mousedown', e => { dragging = true; moved = false; lx = e.offsetX; ly = e.offsetY; cv.classList.add('dragging'); });
+window.addEventListener('mouseup', () => { dragging = false; cv.classList.remove('dragging'); });
+cv.addEventListener('mousemove', e => {
+  if (dragging) {
+    view.tx += e.offsetX - lx; view.ty += e.offsetY - ly; lx = e.offsetX; ly = e.offsetY;
+    moved = true; tip.style.display = 'none'; draw(); return;
+  }
+  const id = pick(e.offsetX, e.offsetY);
+  if (id !== hover) { hover = id; draw(); }
+  if (id !== null) {
+    tip.style.display = 'block';
+    tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10) + 'px';
+    if (mode === 'mw') {
+      const s = MW.states[id];
+      tip.textContent = 'state ' + id + ' · step ' + s.step + ' · ' + s.edges.length +
+        ' edges · absorbs ' + fmt(s.paths) + (s.paths === '1' ? ' tree path' : ' tree paths');
+    } else {
+      tip.textContent = id === 0 ? 'event 0 · initial condition' : 'event ' + id + ' · causal depth ' + caDepth[id];
+    }
+  } else tip.style.display = 'none';
+});
+cv.addEventListener('mouseleave', () => { hover = null; tip.style.display = 'none'; draw(); });
+cv.addEventListener('click', e => {
+  if (moved) return;
+  const id = pick(e.offsetX, e.offsetY);
+  if (mode === 'mw' && id !== null) { selected = id; inspect(id); draw(); }
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const f = Math.exp(-e.deltaY * 0.0015);
+  const k2 = Math.max(0.2, Math.min(12, view.k * f)), r = k2 / view.k;
+  view.tx = e.offsetX - r * (e.offsetX - view.tx);
+  view.ty = e.offsetY - r * (e.offsetY - view.ty);
+  view.k = k2; draw();
+}, { passive: false });
+cv.addEventListener('dblclick', () => { view.k = 1; view.tx = 0; view.ty = 0; draw(); });
+
+/* ---------- tabs & legend ---------- */
+const tabMw = document.getElementById('tabMw'), tabCa = document.getElementById('tabCa');
+function setMode(m) {
+  mode = m; hover = null;
+  tabMw.setAttribute('aria-selected', m === 'mw');
+  tabCa.setAttribute('aria-selected', m === 'ca');
+  legend(); draw();
+}
+tabMw.onclick = () => setMode('mw');
+if (DATA.causal) tabCa.onclick = () => setMode('ca'); else tabCa.style.display = 'none';
+function sw(color, dashed) {
+  return '<svg class="sw" width="18" height="10">' + (dashed
+    ? '<line x1="1" y1="5" x2="17" y2="5" stroke="' + color + '" stroke-width="2" stroke-dasharray="3,3"/>'
+    : '<circle cx="9" cy="5" r="4" fill="' + color + '"/>') + '</svg>';
+}
+function legend() {
+  const el = document.getElementById('legend');
+  el.innerHTML = mode === 'mw'
+    ? '<span>' + sw(tok('--ramp-1')) + sw(tok('--ramp-4')) + ' state (early → late step)</span>' +
+      '<span><svg class="sw" width="18" height="10"><line x1="1" y1="5" x2="17" y2="5" stroke="' + tok('--baseline') + '" stroke-width="2"/></svg> evolution</span>' +
+      '<span>' + sw(tok('--series-5'), true) + ' branchial pair</span>'
+    : '<span>' + sw(tok('--series-3')) + ' initial condition</span>' +
+      '<span>' + sw(tok('--series-2')) + ' event</span>' +
+      '<span><svg class="sw" width="18" height="10"><line x1="1" y1="5" x2="17" y2="5" stroke="' + tok('--baseline') + '" stroke-width="2"/></svg> causal dependency</span>';
+}
+
+/* ---------- inspector: force-layout the selected state's hypergraph ---------- */
+function inspect(id) {
+  const s = MW.states[id];
+  document.getElementById('meta').innerHTML =
+    'state <b>' + id + '</b> · step <b>' + s.step + '</b> · <b>' + s.edges.length +
+    '</b> edges · absorbs <b>' + fmt(s.paths) + '</b> tree paths';
+  document.getElementById('edgeDump').textContent =
+    '{' + s.edges.map(e => '{' + e.join(',') + '}').join(', ') + '}';
+
+  const verts = [...new Set(s.edges.flat())];
+  const vi = new Map(verts.map((v, i) => [v, i]));
+  const N = verts.length;
+  const icv = document.getElementById('inspector');
+  const dpr = window.devicePixelRatio || 1;
+  const W = icv.clientWidth || 310, H = 300;
+  icv.width = W * dpr; icv.height = H * dpr;
+  const g = icv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // springs from consecutive pairs in every hyperedge
+  const springs = [], pairCount = new Map();
+  s.edges.forEach(e => {
+    for (let i = 0; i + 1 < e.length; i++) {
+      const a = vi.get(e[i]), b = vi.get(e[i + 1]);
+      if (a === b) continue;
+      const key = Math.min(a, b) + ':' + Math.max(a, b);
+      const c = (pairCount.get(key) || 0) + 1; pairCount.set(key, c);
+      springs.push({ a, b, n: c });
+    }
+  });
+  // deterministic initial ring (no Math.random -> reproducible screenshots)
+  const px = new Array(N), py = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const ang = 2 * Math.PI * i / Math.max(1, N) + 0.7;
+    px[i] = W / 2 + (W / 3.1) * Math.cos(ang) * (0.75 + 0.25 * ((i * 7919) % 97) / 97);
+    py[i] = H / 2 + (H / 3.1) * Math.sin(ang) * (0.75 + 0.25 * ((i * 104729) % 89) / 89);
+  }
+  const REP = 1600, SPR = 0.06, REST = Math.max(34, 150 / Math.sqrt(Math.max(1, N)));
+  for (let it = 0; it < 300; it++) {
+    const fx = new Array(N).fill(0), fy = new Array(N).fill(0);
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      let dx = px[i] - px[j], dy = py[i] - py[j];
+      let d2 = dx * dx + dy * dy + 0.01, d = Math.sqrt(d2);
+      const f = REP / d2;
+      fx[i] += f * dx / d; fy[i] += f * dy / d; fx[j] -= f * dx / d; fy[j] -= f * dy / d;
+    }
+    springs.forEach(sp => {
+      let dx = px[sp.b] - px[sp.a], dy = py[sp.b] - py[sp.a];
+      const d = Math.sqrt(dx * dx + dy * dy) + 0.01, f = SPR * (d - REST);
+      fx[sp.a] += f * dx / d; fy[sp.a] += f * dy / d; fx[sp.b] -= f * dx / d; fy[sp.b] -= f * dy / d;
+    });
+    const cool = 1 - it / 320;
+    for (let i = 0; i < N; i++) {
+      fx[i] += (W / 2 - px[i]) * 0.012; fy[i] += (H / 2 - py[i]) * 0.012;
+      px[i] += Math.max(-9, Math.min(9, fx[i] * cool));
+      py[i] += Math.max(-9, Math.min(9, fy[i] * cool));
+      px[i] = Math.max(14, Math.min(W - 14, px[i]));
+      py[i] = Math.max(14, Math.min(H - 14, py[i]));
+    }
+  }
+
+  // draw
+  g.fillStyle = tok('--surface-1'); g.fillRect(0, 0, W, H);
+  const drawn = new Map();
+  const arrow = (x1, y1, x2, y2, curve) => {
+    const mx = (x1 + x2) / 2 - curve * (y2 - y1) * 0.35;
+    const my = (y1 + y2) / 2 + curve * (x2 - x1) * 0.35;
+    g.beginPath(); g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2); g.stroke();
+    const ang = Math.atan2(y2 - my, x2 - mx);
+    const bx = x2 - 6 * Math.cos(ang), by = y2 - 6 * Math.sin(ang);
+    g.beginPath(); g.moveTo(x2, y2);
+    g.lineTo(bx + 4 * Math.sin(ang), by - 4 * Math.cos(ang));
+    g.lineTo(bx - 4 * Math.sin(ang), by + 4 * Math.cos(ang));
+    g.closePath(); g.fill();
+  };
+  g.strokeStyle = tok('--ink-muted'); g.fillStyle = tok('--ink-muted'); g.lineWidth = 1.4; g.globalAlpha = 0.85;
+  s.edges.forEach(e => {
+    for (let i = 0; i + 1 < e.length; i++) {
+      const a = vi.get(e[i]), b = vi.get(e[i + 1]);
+      if (a === b) { // self-loop
+        const n = (drawn.get('L' + a) || 0) + 1; drawn.set('L' + a, n);
+        const r = 7 + 4 * n;
+        g.beginPath(); g.arc(px[a] + r * 0.8, py[a] - r * 0.8, r, 0, 7); g.stroke();
+      } else {
+        const key = Math.min(a, b) + ':' + Math.max(a, b);
+        const n = (drawn.get(key) || 0) + 1; drawn.set(key, n);
+        const curve = (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.8;
+        const dx = px[b] - px[a], dy = py[b] - py[a], d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+        arrow(px[a] + 6 * dx / d, py[a] + 6 * dy / d, px[b] - 8 * dx / d, py[b] - 8 * dy / d, curve);
+      }
+    }
+  });
+  g.globalAlpha = 1;
+  for (let i = 0; i < N; i++) {
+    g.fillStyle = tok('--series-1');
+    g.beginPath(); g.arc(px[i], py[i], 4.5, 0, 7); g.fill();
+  }
+  if (N <= 42) {
+    g.fillStyle = tok('--ink-2'); g.font = '10px system-ui, sans-serif'; g.textAlign = 'center';
+    for (let i = 0; i < N; i++) g.fillText(String(verts[i]), px[i], py[i] - 8);
+  }
+}
+
+/* ---------- boot ---------- */
+function boot() { computeLayouts(); legend(); draw(); }
+window.addEventListener('resize', boot);
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { legend(); draw(); if (selected !== null) inspect(selected); });
+}
+boot();
+// pre-select a mid-depth state so the inspector isn't empty on load
+(function preselect() {
+  const mid = MW.layers[Math.min(2, maxStep)];
+  if (mid && mid.length) { selected = mid[0]; inspect(selected); draw(); }
+})();
+</script>
+</body>
+</html>
