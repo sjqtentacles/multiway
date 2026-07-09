@@ -15,26 +15,9 @@
 //! tie-breaking) so states get a canonical *form*, not just a hash — the
 //! prerequisite for HashLife-style memoization of local evolution.
 
+use crate::det::{hash_seq, mix};
 use crate::hypergraph::{State, Vertex};
 use std::collections::HashMap;
-
-#[inline]
-fn mix(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
-}
-
-/// Order-sensitive hash of a sequence (deterministic across runs — no
-/// std RandomState anywhere, results must be reproducible).
-fn hash_seq(xs: &[u64]) -> u64 {
-    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
-    for &x in xs {
-        h = mix(h ^ x);
-    }
-    mix(h ^ (xs.len() as u64))
-}
 
 /// Isomorphism-invariant hash of a state.
 ///

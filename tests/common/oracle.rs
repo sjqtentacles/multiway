@@ -112,10 +112,14 @@ pub fn naive_tree(rule: &Rule, init: &State, steps: usize, cap: usize) -> Option
     Some(layers)
 }
 
+/// Exact label-independent invariant: (vertex count, edge count, sorted
+/// arity profile, sorted per-vertex incidence-degree profile).
+type IsoKey = (usize, usize, Vec<usize>, Vec<usize>);
+
 /// Exact label-independent invariants used to prefilter `iso_classes`.
 /// Deliberately NOT `wl_hash` — the oracle must not share code with the
 /// system under test.
-fn iso_invariant_key(s: &State) -> (usize, usize, Vec<usize>, Vec<usize>) {
+fn iso_invariant_key(s: &State) -> IsoKey {
     let vs = s.vertices();
     let mut arities: Vec<usize> = s.edges.iter().map(|e| e.len()).collect();
     arities.sort_unstable();
@@ -133,7 +137,7 @@ fn iso_invariant_key(s: &State) -> (usize, usize, Vec<usize>, Vec<usize>) {
 /// `iso_bruteforce` within invariant-key groups. Returns the classes as
 /// index lists into `layer`, in a deterministic order.
 pub fn iso_classes(layer: &[State]) -> Vec<Vec<usize>> {
-    let mut groups: BTreeMap<(usize, usize, Vec<usize>, Vec<usize>), Vec<usize>> = BTreeMap::new();
+    let mut groups: BTreeMap<IsoKey, Vec<usize>> = BTreeMap::new();
     for (i, s) in layer.iter().enumerate() {
         groups.entry(iso_invariant_key(s)).or_default().push(i);
     }
@@ -158,11 +162,14 @@ pub fn iso_classes(layer: &[State]) -> Vec<Vec<usize>> {
     classes
 }
 
+/// A brute-force match: consumed edge indices plus the variable binding.
+pub type BruteMatch = (Vec<usize>, Vec<Option<Vertex>>);
+
 /// Matcher ground truth: enumerate every ordered tuple of distinct edge
 /// indices (odometer order — lexicographic in the tuple, matching
 /// `find_matches`' documented enumeration order) and accept a tuple iff the
 /// positional variable bindings are consistent. No backtracking, no pruning.
-pub fn match_bruteforce(state: &State, rule: &Rule) -> Vec<(Vec<usize>, Vec<Option<Vertex>>)> {
+pub fn match_bruteforce(state: &State, rule: &Rule) -> Vec<BruteMatch> {
     let k = rule.lhs.len();
     let n = state.edges.len();
     let mut out = Vec::new();
@@ -175,7 +182,7 @@ pub fn match_bruteforce(state: &State, rule: &Rule) -> Vec<(Vec<usize>, Vec<Opti
         state: &State,
         rule: &Rule,
         tuple: &mut Vec<usize>,
-        out: &mut Vec<(Vec<usize>, Vec<Option<Vertex>>)>,
+        out: &mut Vec<BruteMatch>,
     ) {
         if pos == k {
             // full tuple: check arities and positional binding consistency

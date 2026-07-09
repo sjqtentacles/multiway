@@ -12,6 +12,7 @@
 //!
 //! Modules:
 //! - [`hypergraph`]: states and hyperedges
+//! - [`det`]: determinism primitives — mixing function, deterministic maps, seeded PRNG
 //! - [`canon`]: Weisfeiler–Leman-style invariant hashing + exact isomorphism check
 //! - [`rule`]: parsing `{{x,y},{x,z}} -> {{x,z},{x,w},{y,w},{z,w}}` notation
 //! - [`matcher`]: backtracking sub-hypergraph matching and rule application
@@ -21,6 +22,7 @@
 
 pub mod canon;
 pub mod causal;
+pub mod det;
 pub mod export;
 pub mod hypergraph;
 pub mod matcher;
