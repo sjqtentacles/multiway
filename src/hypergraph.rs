@@ -39,4 +39,18 @@ impl State {
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }
+
+    /// Brace notation: `{{0,1},{2}}`; the empty state prints as `{}`.
+    /// `parse_state ∘ to_notation` is the identity on edge lists.
+    pub fn to_notation(&self) -> String {
+        let inner: Vec<String> = self
+            .edges
+            .iter()
+            .map(|e| {
+                let vs: Vec<String> = e.iter().map(|v| v.to_string()).collect();
+                format!("{{{}}}", vs.join(","))
+            })
+            .collect();
+        format!("{{{}}}", inner.join(","))
+    }
 }

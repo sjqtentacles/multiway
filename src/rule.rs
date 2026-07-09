@@ -24,6 +24,25 @@ pub struct Rule {
     pub text: String,
 }
 
+impl Rule {
+    /// Brace notation rebuilt from the interned representation via
+    /// `var_names`. `parse_rule ∘ to_notation` is a fixed point (structure
+    /// and a second print both stabilize) — pinned by tests.
+    pub fn to_notation(&self) -> String {
+        let side = |edges: &[Vec<usize>]| -> String {
+            let inner: Vec<String> = edges
+                .iter()
+                .map(|e| {
+                    let vs: Vec<&str> = e.iter().map(|&v| self.var_names[v].as_str()).collect();
+                    format!("{{{}}}", vs.join(","))
+                })
+                .collect();
+            format!("{{{}}}", inner.join(","))
+        };
+        format!("{}->{}", side(&self.lhs), side(&self.rhs))
+    }
+}
+
 struct P<'a> {
     s: &'a [u8],
     i: usize,
