@@ -1,9 +1,11 @@
 //! Deterministic text rendering of run statistics.
 //!
 //! Extracted from `main.rs` so the CLI's stdout and the golden tests share
-//! one renderer — the golden files lock this output byte-for-byte.
+//! one renderer — the golden files lock this output byte-for-byte. The
+//! table primitives live in [`crate::stats`].
 
 use crate::causal::CausalRun;
+use crate::stats::{group_digits, render_summary, render_table};
 use crate::system::MultiwaySystem;
 use std::fmt::Write;
 
@@ -19,42 +21,22 @@ pub fn stats_text(
     writeln!(out, "rule   {}", rule_text).unwrap();
     writeln!(out, "init   {}", init_text).unwrap();
     writeln!(out).unwrap();
-    writeln!(
-        out,
-        "{:>5}  {:>16}  {:>10}  {:>9}",
-        "step", "tree nodes", "canonical", "sharing"
-    )
-    .unwrap();
-    for (step, paths, canon) in mw.sharing_per_layer() {
-        let ratio = if canon > 0 {
-            format!("{:.1}x", paths as f64 / canon as f64)
+    out.push_str(&render_table(mw));
+    writeln!(out).unwrap();
+    out.push_str(&render_summary(mw));
+    if let Some(c) = causal {
+        let gens = if c.generations.iter().all(|&g| g == 1) {
+            String::new()
         } else {
-            "-".to_string()
+            format!(" in {} generations", c.generations.len())
         };
         writeln!(
             out,
-            "{:>5}  {:>16}  {:>10}  {:>9}",
-            step, paths, canon, ratio
-        )
-        .unwrap();
-    }
-    writeln!(out).unwrap();
-    writeln!(
-        out,
-        "canonical states {}   events {}   branchial pairs {}   back-merges {}",
-        mw.states.len(),
-        mw.events.len(),
-        mw.branchial.len(),
-        mw.back_merges
-    )
-    .unwrap();
-    if let Some(c) = causal {
-        writeln!(
-            out,
-            "causal run: {} events, {} causal edges, final state {} edges",
-            c.n_events,
-            c.deps.len(),
-            c.final_state.edge_count()
+            "causal run: {} events{}, {} causal edges, final state {} edges",
+            group_digits((c.n_events) as u128),
+            gens,
+            group_digits(c.deps.len() as u128),
+            group_digits(c.final_state.edge_count() as u128)
         )
         .unwrap();
     }

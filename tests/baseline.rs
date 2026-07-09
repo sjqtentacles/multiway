@@ -67,3 +67,20 @@ fn classic_rule_depth5_baseline() {
 
     assert_eq!(mw.back_merges, 0);
 }
+
+/// Perf smoke with a 100× margin: catches catastrophic regressions,
+/// immune to CI noise. `#[ignore]`d — run by the release CI job only.
+#[test]
+#[ignore]
+fn perf_smoke_classic_depth5() {
+    let rule = parse_rule(CLASSIC).unwrap();
+    let init = parse_state(INIT).unwrap();
+    let t = std::time::Instant::now();
+    let mw = evolve(&rule, init, 5);
+    assert_eq!(mw.states.len(), 1955);
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(10),
+        "depth-5 took {:?} — baseline is ~0.1s release",
+        t.elapsed()
+    );
+}
