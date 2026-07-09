@@ -1,5 +1,6 @@
 use multiway::causal;
 use multiway::export::bundle_json;
+use multiway::report;
 use multiway::rule::{parse_rule, parse_state};
 use multiway::system::evolve;
 use std::process::exit;
@@ -121,37 +122,10 @@ fn main() {
     };
 
     if !quiet {
-        println!("rule   {}", rule.text);
-        println!("init   {}", init_s.trim());
-        println!();
-        println!(
-            "{:>5}  {:>16}  {:>10}  {:>9}",
-            "step", "tree nodes", "canonical", "sharing"
+        print!(
+            "{}",
+            report::stats_text(&rule.text, init_s.trim(), &mw, causal_run.as_ref())
         );
-        for (step, paths, canon) in mw.sharing_per_layer() {
-            let ratio = if canon > 0 {
-                format!("{:.1}x", paths as f64 / canon as f64)
-            } else {
-                "-".to_string()
-            };
-            println!("{:>5}  {:>16}  {:>10}  {:>9}", step, paths, canon, ratio);
-        }
-        println!();
-        println!(
-            "canonical states {}   events {}   branchial pairs {}   back-merges {}",
-            mw.states.len(),
-            mw.events.len(),
-            mw.branchial.len(),
-            mw.back_merges
-        );
-        if let Some(c) = &causal_run {
-            println!(
-                "causal run: {} events, {} causal edges, final state {} edges",
-                c.n_events,
-                c.deps.len(),
-                c.final_state.edge_count()
-            );
-        }
     }
 
     let json = bundle_json(&rule.text, init_s.trim(), &mw, causal_run.as_ref());

@@ -26,5 +26,6 @@ pub mod det;
 pub mod export;
 pub mod hypergraph;
 pub mod matcher;
+pub mod report;
 pub mod rule;
 pub mod system;

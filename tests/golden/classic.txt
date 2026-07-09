@@ -1,0 +1,11 @@
+rule   {{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}
+init   {{0,0},{0,0}}
+
+ step        tree nodes   canonical    sharing
+    0                 1           1       1.0x
+    1                 2           1       2.0x
+    2                24           3       8.0x
+    3               408          18      22.7x
+
+canonical states 23   events 68   branchial pairs 65   back-merges 0
+causal run: 11 events, 16 causal edges, final state 22 edges
