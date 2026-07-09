@@ -6,18 +6,23 @@
 //! state granularity. `path_counts` reports how many naive tree paths
 //! each canonical node absorbs, i.e. how much work the sharing saved.
 
-use crate::canon::{isomorphic, wl_hash};
-use crate::hypergraph::State;
+use crate::canon::{canonicalize, Canon};
+use crate::det::DetMap;
+use crate::hypergraph::{Edge, State};
 use crate::matcher::{apply, find_matches};
 use crate::rule::Rule;
-use std::collections::HashMap;
 
 pub struct StateRec {
     pub id: usize,
     /// Step at which this canonical state was first reached.
     pub step: usize,
+    /// Raw first-reached representative (kept for viewer readability —
+    /// matches are found on this).
     pub state: State,
-    pub hash: u64,
+    /// Canonical form + witness (vertex_map, edge_slots). The form is the
+    /// dedup key; the witness gives every edge instance a stable slot
+    /// identity for the token-event graph.
+    pub canon: Canon,
 }
 
 pub struct Event {
@@ -49,16 +54,18 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
         branchial: Vec::new(),
         back_merges: 0,
     };
-    let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
+    // Dedup key: the canonical form's edge list. No bucket scans, no
+    // in-loop isomorphism checks — form equality IS isomorphism.
+    let mut canon_map: DetMap<Vec<Edge>, usize> = DetMap::default();
 
-    let h0 = wl_hash(&init);
+    let c0 = canonicalize(&init);
+    canon_map.insert(c0.form.edges.clone(), 0);
     mw.states.push(StateRec {
         id: 0,
         step: 0,
         state: init,
-        hash: h0,
+        canon: c0,
     });
-    buckets.insert(h0, vec![0]);
     mw.layers.push(vec![0]);
 
     let mut frontier: Vec<usize> = vec![0];
@@ -72,20 +79,10 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
 
             for m in &matches {
                 let child = apply(&mw.states[sid].state, rule, m);
-                let h = wl_hash(&child);
+                let c = canonicalize(&child);
 
-                let mut found: Option<usize> = None;
-                if let Some(bucket) = buckets.get(&h) {
-                    for &cid in bucket {
-                        if isomorphic(&mw.states[cid].state, &child) {
-                            found = Some(cid);
-                            break;
-                        }
-                    }
-                }
-
-                let cid = match found {
-                    Some(cid) => {
+                let cid = match canon_map.get(&c.form.edges) {
+                    Some(&cid) => {
                         if mw.states[cid].step < step {
                             mw.back_merges += 1;
                         }
@@ -93,13 +90,13 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
                     }
                     None => {
                         let cid = mw.states.len();
+                        canon_map.insert(c.form.edges.clone(), cid);
                         mw.states.push(StateRec {
                             id: cid,
                             step,
                             state: child,
-                            hash: h,
+                            canon: c,
                         });
-                        buckets.entry(h).or_default().push(cid);
                         new_layer.push(cid);
                         cid
                     }

@@ -13,7 +13,7 @@
 //! Modules:
 //! - [`hypergraph`]: states and hyperedges
 //! - [`det`]: determinism primitives — mixing function, deterministic maps, seeded PRNG
-//! - [`canon`]: Weisfeiler–Leman-style invariant hashing + exact isomorphism check
+//! - [`canon`]: true canonization (individualization–refinement canonical forms) + WL hash and exact isomorphism as oracles
 //! - [`rule`]: parsing `{{x,y},{x,z}} -> {{x,z},{x,w},{y,w},{z,w}}` notation
 //! - [`matcher`]: backtracking sub-hypergraph matching and rule application
 //! - [`system`]: multiway evolution with canonical dedup, branchial pairs, path counting
