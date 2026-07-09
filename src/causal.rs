@@ -7,7 +7,7 @@
 //! structure across *all* orders) is on the roadmap.
 
 use crate::hypergraph::State;
-use crate::matcher::find_matches;
+use crate::matcher::{apply_full, delta_matches, find_matches};
 use crate::rule::Rule;
 
 pub struct CausalRun {
@@ -20,18 +20,20 @@ pub struct CausalRun {
 
 /// Evolve sequentially for up to `max_events` events, always applying the
 /// first match in deterministic enumeration order (oldest edges first).
+/// Match sets are delta-maintained ([`delta_matches`] reproduces the full
+/// search byte-exactly), so long runs never re-search the whole state.
 pub fn run(rule: &Rule, init: State, max_events: usize) -> CausalRun {
     let mut state = init;
     let mut creators: Vec<usize> = vec![0; state.edges.len()];
     let mut deps: Vec<(usize, usize)> = Vec::new();
+    let mut ms = find_matches(&state, rule);
     let mut t = 0usize;
 
     while t < max_events {
-        let ms = find_matches(&state, rule);
         if ms.is_empty() {
             break;
         }
-        let m = &ms[0];
+        let m = ms[0].clone();
         t += 1;
         let eid = t;
 
@@ -42,38 +44,13 @@ pub fn run(rule: &Rule, init: State, max_events: usize) -> CausalRun {
             deps.push((s, eid));
         }
 
-        let mut mask = vec![true; state.edges.len()];
-        for &i in &m.edge_idx {
-            mask[i] = false;
+        let app = apply_full(&state, rule, &m);
+        let mut new_creators = vec![eid; app.child.edges.len()];
+        for &(pi, ci) in &app.kept {
+            new_creators[ci] = creators[pi];
         }
-        let mut new_edges = Vec::with_capacity(state.edges.len());
-        let mut new_creators = Vec::with_capacity(state.edges.len());
-        for (i, e) in state.edges.iter().enumerate() {
-            if mask[i] {
-                new_edges.push(e.clone());
-                new_creators.push(creators[i]);
-            }
-        }
-        let mut binding = m.binding.clone();
-        let mut next = state.next_vertex;
-        for pe in &rule.rhs {
-            let e: Vec<u32> = pe
-                .iter()
-                .map(|&v| {
-                    if binding[v].is_none() {
-                        binding[v] = Some(next);
-                        next += 1;
-                    }
-                    binding[v].unwrap()
-                })
-                .collect();
-            new_edges.push(e);
-            new_creators.push(eid);
-        }
-        state = State {
-            edges: new_edges,
-            next_vertex: next,
-        };
+        ms = delta_matches(rule, &ms, &m, &app);
+        state = app.child;
         creators = new_creators;
     }
 

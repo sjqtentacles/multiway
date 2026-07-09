@@ -143,3 +143,154 @@ pub fn apply_full(state: &State, rule: &Rule, m: &Match) -> Application {
 pub fn apply(state: &State, rule: &Rule, m: &Match) -> State {
     apply_full(state, rule, m).child
 }
+
+/// Incrementally maintain a match set across one application.
+///
+/// The child's matches are exactly:
+/// - **survivors**: parent matches whose consumed edges are disjoint from
+///   `m`'s (a match using only kept edges IS a surviving parent match —
+///   `apply` never renames vertices and bindings derive only from a
+///   match's own edges), with edge indices remapped through `app.kept`;
+/// - **new matches**: every match using ≥ 1 produced edge, generated
+///   exactly once by seeding the backtracker at its *smallest* pattern
+///   position holding a produced edge — positions before the seed are
+///   restricted to kept edges, the seed position is pinned, and positions
+///   after are unrestricted.
+///
+/// The result is sorted by `edge_idx`, which reproduces `find_matches`'
+/// enumeration order exactly (its recursion scans edge indices ascending
+/// per position, so its output is lexicographic in `edge_idx`, and
+/// `edge_idx` determines the binding). Byte-stable downstream: event ids,
+/// causal first-match, branchial pairs.
+pub fn delta_matches(
+    rule: &Rule,
+    parent_matches: &[Match],
+    m: &Match,
+    app: &Application,
+) -> Vec<Match> {
+    let child = &app.child;
+    let mut out: Vec<Match> = Vec::new();
+
+    // survivors (app.kept is in parent order — binary search by parent idx)
+    for pm in parent_matches {
+        if pm.edge_idx.iter().any(|i| m.edge_idx.contains(i)) {
+            continue;
+        }
+        let edge_idx: Vec<usize> = pm
+            .edge_idx
+            .iter()
+            .map(|&pi| {
+                let pos = app
+                    .kept
+                    .binary_search_by_key(&pi, |&(p, _)| p)
+                    .expect("surviving match references a consumed edge");
+                app.kept[pos].1
+            })
+            .collect();
+        out.push(Match {
+            edge_idx,
+            binding: pm.binding.clone(),
+        });
+    }
+
+    // new matches, seeded per (pattern position, produced edge)
+    let prod_start = app.produced.start;
+    let mut used = vec![false; child.edges.len()];
+    let mut binding: Vec<Option<Vertex>> = vec![None; rule.n_vars];
+    let mut chosen: Vec<usize> = Vec::with_capacity(rule.lhs.len());
+    for k0 in 0..rule.lhs.len() {
+        for pe in app.produced.clone() {
+            if child.edges[pe].len() != rule.lhs[k0].len() {
+                continue;
+            }
+            seeded_rec(
+                child,
+                rule,
+                0,
+                k0,
+                pe,
+                prod_start,
+                &mut used,
+                &mut binding,
+                &mut chosen,
+                &mut out,
+            );
+        }
+    }
+
+    out.sort_by(|a, b| a.edge_idx.cmp(&b.edge_idx));
+    out
+}
+
+/// Backtracking with position `k0` pinned to edge `pin` and positions
+/// before `k0` restricted to kept edges (child index < `prod_start`).
+#[allow(clippy::too_many_arguments)]
+fn seeded_rec(
+    state: &State,
+    rule: &Rule,
+    k: usize,
+    k0: usize,
+    pin: usize,
+    prod_start: usize,
+    used: &mut [bool],
+    binding: &mut [Option<Vertex>],
+    chosen: &mut Vec<usize>,
+    out: &mut Vec<Match>,
+) {
+    if k == rule.lhs.len() {
+        out.push(Match {
+            edge_idx: chosen.clone(),
+            binding: binding.to_vec(),
+        });
+        return;
+    }
+    let pat = &rule.lhs[k];
+    let candidates: std::ops::Range<usize> = if k == k0 {
+        pin..pin + 1
+    } else if k < k0 {
+        0..prod_start
+    } else {
+        0..state.edges.len()
+    };
+    for ei in candidates {
+        if used[ei] || state.edges[ei].len() != pat.len() {
+            continue;
+        }
+        let mut added: Vec<usize> = Vec::new();
+        let mut ok = true;
+        for (p, v) in pat.iter().zip(state.edges[ei].iter()) {
+            match binding[*p] {
+                Some(x) if x != *v => {
+                    ok = false;
+                    break;
+                }
+                Some(_) => {}
+                None => {
+                    binding[*p] = Some(*v);
+                    added.push(*p);
+                }
+            }
+        }
+        if ok {
+            used[ei] = true;
+            chosen.push(ei);
+            seeded_rec(
+                state,
+                rule,
+                k + 1,
+                k0,
+                pin,
+                prod_start,
+                used,
+                binding,
+                chosen,
+                out,
+            );
+            chosen.pop();
+            used[ei] = false;
+        }
+        for p in added {
+            binding[p] = None;
+        }
+    }
+}
