@@ -6,4 +6,7 @@
 //! to share helpers without dev-dependencies.
 #![allow(dead_code)]
 
+pub mod gen;
+pub mod harness;
 pub mod oracle;
+pub mod prng;
