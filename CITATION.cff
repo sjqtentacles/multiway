@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "multiway: a multiway hypergraph rewriting engine with e-graph-style state sharing"
+authors:
+  - alias: sjqtentacles
+    email: programminglinguist@gmail.com
+repository-code: "https://github.com/sjqtentacles/multiway"
+license: MIT
+version: 0.2.0
+date-released: 2026-07-09
+keywords:
+  - hypergraph
+  - graph-rewriting
+  - wolfram-model
+  - e-graphs
+  - multiway-systems
+  - confluence

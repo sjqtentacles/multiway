@@ -8,7 +8,9 @@ use crate::rule::Rule;
 /// variables remain `None` until application mints fresh vertices.
 #[derive(Clone, Debug)]
 pub struct Match {
+    /// Consumed edge instances, parallel to `rule.lhs`.
     pub edge_idx: Vec<usize>,
+    /// Per-variable binding; RHS-only variables stay `None`.
     pub binding: Vec<Option<Vertex>>,
 }
 

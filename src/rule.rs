@@ -12,6 +12,7 @@
 use crate::hypergraph::State;
 use std::collections::HashMap;
 
+/// A parsed rewrite rule over interned pattern variables.
 #[derive(Clone, Debug)]
 pub struct Rule {
     /// Pattern edges as sequences of variable ids.
@@ -20,7 +21,9 @@ pub struct Rule {
     pub rhs: Vec<Vec<usize>>,
     /// Total number of distinct variables (LHS vars first, then RHS-only).
     pub n_vars: usize,
+    /// Original identifier per variable id (for printing).
     pub var_names: Vec<String>,
+    /// The rule as written (trimmed), for display and export.
     pub text: String,
 }
 
@@ -134,6 +137,13 @@ fn parse_edge_lists(s: &str) -> Result<Vec<Vec<String>>, String> {
     Ok(out)
 }
 
+/// Parse `{{x,y},{x,z}} -> {{x,z},{x,w},{y,w},{z,w}}` notation.
+///
+/// ```
+/// let r = multiway::rule::parse_rule("{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}").unwrap();
+/// assert_eq!(r.n_vars, 4); // x, y, z, plus the RHS-only w
+/// assert!(multiway::rule::parse_rule("{{x,y}}").is_err()); // no arrow
+/// ```
 pub fn parse_rule(s: &str) -> Result<Rule, String> {
     let arrow = s
         .find("->")
@@ -180,6 +190,12 @@ pub fn parse_rule(s: &str) -> Result<Rule, String> {
     })
 }
 
+/// Parse a state literal like `{{0,0},{0,1}}` (vertices are integers).
+///
+/// ```
+/// let s = multiway::rule::parse_state("{{0,0},{0,1}}").unwrap();
+/// assert_eq!(s.edge_count(), 2);
+/// ```
 pub fn parse_state(s: &str) -> Result<State, String> {
     let lists = parse_edge_lists(s.trim())?;
     let mut edges = Vec::with_capacity(lists.len());

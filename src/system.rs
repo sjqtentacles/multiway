@@ -12,7 +12,9 @@ use crate::hypergraph::{Edge, State};
 use crate::matcher::{apply_full, delta_matches, find_matches, Application, Match};
 use crate::rule::Rule;
 
+/// One canonical state of the multiway system.
 pub struct StateRec {
+    /// Dense id (index into `MultiwaySystem::states`).
     pub id: usize,
     /// Step at which this canonical state was first reached.
     pub step: usize,
@@ -25,10 +27,15 @@ pub struct StateRec {
     pub canon: Canon,
 }
 
+/// One rewrite event between canonical states.
 pub struct Event {
+    /// Dense id (index into `MultiwaySystem::events`).
     pub id: usize,
+    /// Parent canonical state.
     pub from: usize,
+    /// Child canonical state (possibly first reached earlier — a merge).
     pub to: usize,
+    /// Step at which this event fired.
     pub step: usize,
 }
 
@@ -45,8 +52,11 @@ pub struct EventTokens {
     pub passthrough: Vec<(usize, usize)>,
 }
 
+/// A multiway evolution: canonical states, events, and derived structure.
 pub struct MultiwaySystem {
+    /// Canonical states in discovery order.
     pub states: Vec<StateRec>,
+    /// Events in creation order.
     pub events: Vec<Event>,
     /// Token flow per event (parallel to `events`).
     pub event_tokens: Vec<EventTokens>,
@@ -101,6 +111,15 @@ impl Default for EvolveOpts {
     }
 }
 
+/// Evolve `steps` multiway layers with default options (serial,
+/// incremental matching).
+///
+/// ```
+/// let rule = multiway::rule::parse_rule("{{x,y}}->{{x,y},{y,z}}").unwrap();
+/// let init = multiway::rule::parse_state("{{0,0}}").unwrap();
+/// let mw = multiway::system::evolve(&rule, init, 2);
+/// assert_eq!(mw.layers.iter().map(|l| l.len()).collect::<Vec<_>>(), vec![1, 1, 2]);
+/// ```
 pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
     evolve_opts(
         rule,

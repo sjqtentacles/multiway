@@ -32,6 +32,7 @@ fn esc(s: &str) -> String {
     out
 }
 
+/// A state's edge list as a JSON array of arrays.
 pub fn edges_json(state: &State) -> String {
     let inner: Vec<String> = state
         .edges
@@ -44,6 +45,7 @@ pub fn edges_json(state: &State) -> String {
     format!("[{}]", inner.join(","))
 }
 
+/// The multiway section: states, events, branchial pairs, layers, sharing.
 pub fn multiway_json(mw: &MultiwaySystem) -> String {
     let pc = mw.path_counts();
     let states: Vec<String> = mw
@@ -103,6 +105,7 @@ pub fn multiway_json(mw: &MultiwaySystem) -> String {
     )
 }
 
+/// The single-path causal section: event count, deps, final state.
 pub fn causal_json(c: &CausalRun) -> String {
     let deps: Vec<String> = c
         .deps
@@ -138,6 +141,7 @@ pub fn teg_json(t: &crate::teg::TokenEventGraph) -> String {
     )
 }
 
+/// The complete data bundle the CLI writes and the viewer consumes.
 pub fn bundle_json(
     rule_text: &str,
     init_text: &str,

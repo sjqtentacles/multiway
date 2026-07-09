@@ -1,5 +1,6 @@
 //! Hypergraph states: multisets of ordered hyperedges over integer vertices.
 
+/// A vertex: a plain integer label with no intrinsic meaning.
 pub type Vertex = u32;
 
 /// An ordered hyperedge. `vec![a, b]` is a directed binary edge a -> b;
@@ -12,11 +13,14 @@ pub type Edge = Vec<Vertex>;
 /// new ones.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct State {
+    /// The edge instances (a multiset — duplicates are distinct).
     pub edges: Vec<Edge>,
+    /// Counter for minting fresh vertices on RHS-only rule variables.
     pub next_vertex: Vertex,
 }
 
 impl State {
+    /// Build a state from edges, deriving `next_vertex` = max label + 1.
     pub fn new(edges: Vec<Edge>) -> Self {
         let next_vertex = edges
             .iter()
@@ -36,6 +40,7 @@ impl State {
         vs
     }
 
+    /// Number of edge instances.
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }

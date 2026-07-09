@@ -10,11 +10,13 @@ use crate::hypergraph::State;
 use crate::matcher::{apply_full, delta_matches, find_matches};
 use crate::rule::Rule;
 
+/// One deterministic history: its causal dependencies and final state.
 pub struct CausalRun {
     /// Total events including event 0 (the initial condition).
     pub n_events: usize,
     /// Causal dependencies (creator_event, consumer_event).
     pub deps: Vec<(usize, usize)>,
+    /// The state after the last applied event.
     pub final_state: State,
     /// Events per generation: `[1; n]` for sequential runs; for the
     /// standard updating order, the size of each maximal disjoint set.
