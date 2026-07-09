@@ -60,7 +60,7 @@ pub struct MultiwaySystem {
     pub events: Vec<Event>,
     /// Token flow per event (parallel to `events`).
     pub event_tokens: Vec<EventTokens>,
-    /// States first reached at each step (layers[0] = [initial]).
+    /// States first reached at each step (`layers[0]` holds the initial state).
     pub layers: Vec<Vec<usize>>,
     /// Branchial pairs: same-step sibling states produced from a common parent.
     pub branchial: Vec<(usize, usize)>,
