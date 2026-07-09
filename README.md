@@ -201,10 +201,11 @@ The deep-dive lives in [docs/THEORY.md](docs/THEORY.md).
 - [x] Incremental matching — delta-maintained match sets
 - [x] Parallel rewriting — deterministic-by-construction threading + standard updating order
 - [x] Rule lint — conservation/termination checks (the v0 of a typed rule layer)
-- [ ] Sub-state sharing — the actual e-graph: share sub-hypergraphs *across* states (egglog-style relational substrate)
-- [ ] Automorphism pruning + orbit-true token identity (canonization V2)
-- [ ] Critical-pair lemma proof note for this formalism
-- [ ] WASM playground — the engine in the browser, hand-rolled ABI, still zero deps
+- [ ] Sub-state sharing — the actual e-graph: share sub-hypergraphs *across* states (egglog-style relational substrate) — [#1](https://github.com/sjqtentacles/multiway/issues/1)
+- [ ] Automorphism pruning + orbit-true token identity (canonization V2) — [#3](https://github.com/sjqtentacles/multiway/issues/3)
+- [ ] Critical-pair lemma proof note for this formalism — [#4](https://github.com/sjqtentacles/multiway/issues/4)
+- [ ] WASM playground — the engine in the browser, hand-rolled ABI, still zero deps — [#2](https://github.com/sjqtentacles/multiway/issues/2)
+- [ ] Terminal ASCII renderer — [#5](https://github.com/sjqtentacles/multiway/issues/5) · Token creator-set export — [#6](https://github.com/sjqtentacles/multiway/issues/6) (good first issues)
 - [ ] Typed rule layer — conservation laws as compile-time guarantees
 
 ## License
