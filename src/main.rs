@@ -1,7 +1,9 @@
 use multiway::causal;
+use multiway::confluence::{check, CheckCfg};
 use multiway::export::bundle_json;
+use multiway::lint::lint;
 use multiway::report;
-use multiway::rule::{parse_rule, parse_state};
+use multiway::rule::{parse_rule, parse_state, Rule};
 use multiway::system::evolve;
 use std::process::exit;
 
@@ -11,9 +13,13 @@ const USAGE: &str = r#"multiway — a multiway hypergraph rewriting engine with 
 
 USAGE:
   multiway --rule "<rule>" --init "<state>" --steps N [options]
+  multiway --check-confluence --rule "<rule>" [--rule "<rule>" ...] [bounds]
+  multiway --lint --rule "<rule>" [--rule "<rule>" ...]
 
 OPTIONS:
   --rule "<rule>"    rewrite rule, e.g. "{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}"
+                     (repeatable in --check-confluence / --lint modes;
+                      evolution takes exactly one)
   --init "<state>"   initial state, e.g. "{{0,0},{0,0}}"
   --steps N          multiway evolution depth
   --causal N         also run a single-path evolution for N events (causal graph)
@@ -21,21 +27,30 @@ OPTIONS:
   --html PATH        write a self-contained interactive viewer
   --quiet            suppress the stats table
 
+  --check-confluence run critical-pair analysis instead of evolving
+  --join-depth N     joinability search depth per side (default 8)
+  --max-states N     joinability state budget per side (default 2000)
+  --lint             print static rule analysis (conservation, termination)
+
 EXAMPLES:
   multiway --rule "{{x,y}}->{{x,y},{y,z}}" --init "{{0,0}}" --steps 6 --html demo.html
   multiway --rule "{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}" --init "{{0,0},{0,0}}" \
            --steps 4 --causal 40 --html demo.html
+  multiway --check-confluence --rule "{{x,y}}->{{x}}" --rule "{{x,y}}->{{y}}"
 "#;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut rule_s: Option<String> = None;
+    let mut rule_texts: Vec<String> = Vec::new();
     let mut init_s: Option<String> = None;
     let mut steps: usize = 0;
     let mut causal_events: usize = 0;
     let mut json_path: Option<String> = None;
     let mut html_path: Option<String> = None;
     let mut quiet = false;
+    let mut mode_confluence = false;
+    let mut mode_lint = false;
+    let mut check_cfg = CheckCfg::default();
 
     let mut i = 0;
     while i < args.len() {
@@ -49,7 +64,7 @@ fn main() {
         };
         match args[i].as_str() {
             "--rule" => {
-                rule_s = Some(need(i));
+                rule_texts.push(need(i));
                 i += 2;
             }
             "--init" => {
@@ -82,6 +97,28 @@ fn main() {
                 quiet = true;
                 i += 1;
             }
+            "--check-confluence" => {
+                mode_confluence = true;
+                i += 1;
+            }
+            "--lint" => {
+                mode_lint = true;
+                i += 1;
+            }
+            "--join-depth" => {
+                check_cfg.join_depth = need(i).parse().unwrap_or_else(|_| {
+                    eprintln!("--join-depth must be an integer");
+                    exit(2);
+                });
+                i += 2;
+            }
+            "--max-states" => {
+                check_cfg.max_states = need(i).parse().unwrap_or_else(|_| {
+                    eprintln!("--max-states must be an integer");
+                    exit(2);
+                });
+                i += 2;
+            }
             "--help" | "-h" => {
                 println!("{}", USAGE);
                 return;
@@ -93,13 +130,53 @@ fn main() {
         }
     }
 
-    let (rule_s, init_s) = match (rule_s, init_s) {
-        (Some(r), Some(s)) => (r, s),
+    // analysis modes take one or more rules and no initial state
+    if mode_lint || mode_confluence {
+        if rule_texts.is_empty() {
+            eprintln!("analysis modes need at least one --rule\n\n{}", USAGE);
+            exit(2);
+        }
+        let rules: Vec<Rule> = rule_texts
+            .iter()
+            .map(|t| {
+                parse_rule(t).unwrap_or_else(|e| {
+                    eprintln!("rule parse error: {}", e);
+                    exit(2);
+                })
+            })
+            .collect();
+        if mode_lint {
+            for rule in &rules {
+                print!("{}", lint(rule).render(rule));
+            }
+        }
+        if mode_confluence {
+            match check(&rules, &check_cfg) {
+                Ok(report) => print!("{}", report.render(&rules)),
+                Err(e) => {
+                    eprintln!("confluence check error: {}", e);
+                    exit(1);
+                }
+            }
+        }
+        return;
+    }
+
+    let rule_s = match (rule_texts.len(), init_s.as_ref()) {
+        (1, Some(_)) => rule_texts.remove(0),
+        (n, _) if n > 1 => {
+            eprintln!(
+                "evolution takes exactly one --rule (got {})\n\n{}",
+                n, USAGE
+            );
+            exit(2);
+        }
         _ => {
             eprintln!("{}", USAGE);
             exit(2);
         }
     };
+    let init_s = init_s.unwrap();
     if steps == 0 && causal_events == 0 {
         eprintln!("nothing to do: set --steps and/or --causal\n\n{}", USAGE);
         exit(2);

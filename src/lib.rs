@@ -22,9 +22,11 @@
 
 pub mod canon;
 pub mod causal;
+pub mod confluence;
 pub mod det;
 pub mod export;
 pub mod hypergraph;
+pub mod lint;
 pub mod matcher;
 pub mod report;
 pub mod rule;
