@@ -8,9 +8,10 @@
 
 use crate::canon::{canonicalize, Canon};
 use crate::det::DetMap;
-use crate::hypergraph::{Edge, State};
+use crate::hypergraph::{State, Vertex};
 use crate::matcher::{apply_full, delta_matches, find_matches, Application, Match};
 use crate::rule::Rule;
+use crate::store::{EdgeId, EdgeStore};
 
 /// Monotonic profiling timer. wasm32-unknown-unknown has no runtime
 /// clock — `Instant::now()` COMPILES there but traps at runtime — so the
@@ -54,10 +55,18 @@ pub struct StateRec {
     /// Raw first-reached representative (kept for viewer readability —
     /// matches are found on this).
     pub state: State,
-    /// Canonical form + witness (vertex_map, edge_slots). The form is the
-    /// dedup key; the witness gives every edge instance a stable slot
-    /// identity for the token-event graph.
-    pub canon: Canon,
+    /// The canonical form as interned edge ids, **in the form's (len,
+    /// sequence) edge order** — never numerically sorted (ids are
+    /// first-encounter-ordered; numeric order would scramble slot
+    /// identity). Resolve content via `MultiwaySystem::store`. Doubles as
+    /// the dedup key.
+    pub form_ids: Vec<EdgeId>,
+    /// Raw edge index -> canonical slot (indexes `form_ids` exactly as it
+    /// indexed the form's edge list) — token identity for the TEG.
+    pub edge_slots: Vec<usize>,
+    /// Raw vertex -> canonical label. Retained for library completeness;
+    /// nothing in the engine reads it after evolve.
+    pub vertex_map: DetMap<Vertex, Vertex>,
 }
 
 /// One rewrite event between canonical states.
@@ -104,6 +113,9 @@ pub struct MultiwaySystem {
     pub back_merges: usize,
     /// Match-maintenance telemetry.
     pub stats: EvolveStats,
+    /// Hash-consed store for the canonical forms' edges: `form_ids`
+    /// resolve here. See [`crate::store`].
+    pub store: EdgeStore,
 }
 
 /// Telemetry counters for match maintenance (pinned by tests: incremental
@@ -204,18 +216,22 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         branchial: Vec::new(),
         back_merges: 0,
         stats: EvolveStats::default(),
+        store: EdgeStore::default(),
     };
     // Dedup key: the canonical form's edge list. No bucket scans, no
     // in-loop isomorphism checks — form equality IS isomorphism.
-    let mut canon_map: DetMap<Vec<Edge>, usize> = DetMap::default();
+    let mut canon_map: DetMap<Vec<EdgeId>, usize> = DetMap::default();
 
     let c0 = canonicalize(&init);
-    canon_map.insert(c0.form.edges.clone(), 0);
+    let form_ids0: Vec<EdgeId> = c0.form.edges.iter().map(|e| mw.store.intern(e)).collect();
+    canon_map.insert(form_ids0.clone(), 0);
     mw.states.push(StateRec {
         id: 0,
         step: 0,
         state: init,
-        canon: c0,
+        form_ids: form_ids0,
+        edge_slots: c0.edge_slots,
+        vertex_map: c0.vertex_map,
     });
     mw.layers.push(vec![0]);
 
@@ -257,7 +273,7 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                 let mut consumed: Vec<usize> = m
                     .edge_idx
                     .iter()
-                    .map(|&i| mw.states[sid].canon.edge_slots[i])
+                    .map(|&i| mw.states[sid].edge_slots[i])
                     .collect();
                 consumed.sort_unstable();
                 let mut produced: Vec<usize> =
@@ -266,7 +282,7 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                 let passthrough: Vec<(usize, usize)> = app
                     .kept
                     .iter()
-                    .map(|&(pi, ci)| (mw.states[sid].canon.edge_slots[pi], c.edge_slots[ci]))
+                    .map(|&(pi, ci)| (mw.states[sid].edge_slots[pi], c.edge_slots[ci]))
                     .collect();
 
                 if let Some(bt) = bt {
@@ -278,7 +294,11 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                 } else {
                     None
                 };
-                let cid = match canon_map.get(&c.form.edges) {
+                // Intern the child's form edges (get-or-insert; merged
+                // children fetch existing ids). Serial Phase B only, so
+                // ids are a pure function of the evolution.
+                let key: Vec<EdgeId> = c.form.edges.iter().map(|e| mw.store.intern(e)).collect();
+                let cid = match canon_map.get(&key) {
                     Some(&cid) => {
                         if mw.states[cid].step < step {
                             mw.back_merges += 1;
@@ -287,7 +307,7 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                     }
                     None => {
                         let cid = mw.states.len();
-                        canon_map.insert(c.form.edges.clone(), cid);
+                        canon_map.insert(key.clone(), cid);
                         // Lazy match maintenance: only NEW canonical
                         // states get a match set (merged children are
                         // never expanded); computed in Phase C.
@@ -306,7 +326,9 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                             id: cid,
                             step,
                             state: child,
-                            canon,
+                            form_ids: key,
+                            edge_slots: canon.edge_slots,
+                            vertex_map: canon.vertex_map,
                         });
                         new_layer.push(cid);
                         cid

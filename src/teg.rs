@@ -81,7 +81,8 @@ pub fn build(mw: &MultiwaySystem) -> TokenEventGraph {
         // creator sets across each identical-edge slot run (inside the
         // fixed point, so unions propagate through passthroughs).
         for (sid, s) in mw.states.iter().enumerate() {
-            let form = &s.canon.form.edges;
+            // byte-identical edges ⟺ identical interned ids
+            let form = &s.form_ids;
             let mut run_start = 0;
             for slot in 1..=form.len() {
                 if slot == form.len() || form[slot] != form[run_start] {

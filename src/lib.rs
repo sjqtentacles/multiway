@@ -32,6 +32,7 @@
 //! - [`causal`]: single-path evolution with edge provenance -> causal graph
 //! - [`confluence`]: critical-pair analysis with strong joinability
 //! - [`lint`]: static rule analysis (conservation, termination)
+//! - [`store`]: hash-consed edge store (cross-state structural sharing)
 //! - [`export`]: JSON bundling for the HTML viewer
 //! - [`report`] / [`stats`]: deterministic terminal rendering
 
@@ -48,5 +49,6 @@ pub mod matcher;
 pub mod report;
 pub mod rule;
 pub mod stats;
+pub mod store;
 pub mod system;
 pub mod teg;

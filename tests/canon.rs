@@ -226,9 +226,10 @@ fn disjoint_identical_components() {
     );
 }
 
-/// After the system.rs migration: dedup keys on the canonical form, the
-/// baseline pin is unchanged, and every stored canon is self-consistent
-/// and pairwise distinct.
+/// After the EdgeStore migration: dedup keys on interned form ids, the
+/// baseline pin is unchanged, every stored form resolves back to exactly
+/// `canonical_form(raw)` — same assertion strength as when the full form
+/// was stored — and keys are pairwise distinct.
 #[test]
 fn evolve_uses_canonical_dedup() {
     let rule = parse_rule("{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}").unwrap();
@@ -239,18 +240,23 @@ fn evolve_uses_canonical_dedup() {
     assert_eq!(layer_sizes, vec![1, 1, 3, 18]);
 
     for s in &mw.states {
+        let resolved: Vec<Vec<u32>> = s
+            .form_ids
+            .iter()
+            .map(|&id| mw.store.resolve(id).clone())
+            .collect();
         assert_eq!(
-            s.canon.form,
-            canonical_form(&s.state),
-            "stored canon inconsistent with canonical_form for state {}",
+            resolved,
+            canonical_form(&s.state).edges,
+            "stored form_ids inconsistent with canonical_form for state {}",
             s.id
         );
     }
     for i in 0..mw.states.len() {
         for j in (i + 1)..mw.states.len() {
             assert_ne!(
-                mw.states[i].canon.form, mw.states[j].canon.form,
-                "states {} and {} share a canonical form — dedup failed",
+                mw.states[i].form_ids, mw.states[j].form_ids,
+                "states {} and {} share a canonical key — dedup failed",
                 i, j
             );
         }
