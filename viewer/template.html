@@ -522,7 +522,16 @@ function tipText(id) {
   }
   if (id === 0) return 'event 0 · initial condition';
   const e = MW.events[id - 1];
-  return 'event ' + id + ' (step ' + e.step + ', ' + e.from + '→' + e.to + ')';
+  let s = 'event ' + id + ' (step ' + e.step + ', ' + e.from + '→' + e.to + ')';
+  // D2: multivalued token provenance (guarded — old bundles lack it)
+  if (TEG && TEG.creators && TEG.creators.length) {
+    const co = TEG.creators.filter(([sid]) => sid === e.to);
+    if (co.length) {
+      s += ' · ' + co.length + ' shared token' + (co.length > 1 ? 's' : '') +
+        ' (slot ' + co.map(([, slot, evs]) => slot + ' by events ' + evs.join(',')).join('; ') + ')';
+    }
+  }
+  return s;
 }
 
 /* ---------- interaction (pointer events: mouse, touch, pen) ---------- */

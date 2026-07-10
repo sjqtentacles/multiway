@@ -166,6 +166,38 @@ fn teg_merge_gives_multivalued_creators() {
         multi,
         "24 naive histories merge into 3 canonical states — some token must have multiple creators"
     );
+
+    // D2: the compact creators export — only multi-creator slots, as
+    // [[stateId, slot, [eventIds...]], ...] sorted by (state, slot)
+    // (single-creator slots are implied by the causal edges)
+    let json = multiway::export::teg_json(&t);
+    assert!(
+        json.contains("\"creators\":[["),
+        "teg_json must export the multivalued creator slots: {}",
+        json
+    );
+    // every multivalued slot from the struct appears in the export
+    let mut expected = String::from("\"creators\":[");
+    let mut first = true;
+    for (sid, slots) in t.creators.iter().enumerate() {
+        for (slot, evs) in slots.iter().enumerate() {
+            if evs.len() >= 2 {
+                if !first {
+                    expected.push(',');
+                }
+                first = false;
+                let ids: Vec<String> = evs.iter().map(|e| e.to_string()).collect();
+                expected.push_str(&format!("[{},{},[{}]]", sid, slot, ids.join(",")));
+            }
+        }
+    }
+    expected.push(']');
+    assert!(
+        json.contains(&expected),
+        "creators export must be the (state, slot)-sorted multivalued set\nwant {}\nin   {}",
+        expected,
+        json
+    );
 }
 
 /// Branchial events pair only on overlapping consumption: three disjoint

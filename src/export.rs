@@ -120,9 +120,13 @@ pub fn causal_json(c: &CausalRun) -> String {
     )
 }
 
-/// Token-event graph section: multiway-wide causal edges and event-level
-/// branchial pairs. Creator sets are deliberately NOT exported — fixed
-/// schema, byte-stable, and the viewer only draws the two graphs.
+/// Token-event graph section: multiway-wide causal edges, event-level
+/// branchial pairs, and the COMPACT creator export — only slots with
+/// two or more creators, as `[[stateId, slot, [eventIds...]], ...]`
+/// sorted by (state, slot). Single-creator slots are implied by the
+/// causal edges; the multivalued ones are exactly where canonical
+/// merging makes token provenance path-dependent, which is what the
+/// viewer annotates.
 pub fn teg_json(t: &crate::teg::TokenEventGraph) -> String {
     let causal: Vec<String> = t
         .causal
@@ -134,10 +138,20 @@ pub fn teg_json(t: &crate::teg::TokenEventGraph) -> String {
         .iter()
         .map(|(a, b)| format!("[{},{}]", a, b))
         .collect();
+    let mut creators: Vec<String> = Vec::new();
+    for (sid, slots) in t.creators.iter().enumerate() {
+        for (slot, evs) in slots.iter().enumerate() {
+            if evs.len() >= 2 {
+                let ids: Vec<String> = evs.iter().map(|e| e.to_string()).collect();
+                creators.push(format!("[{},{},[{}]]", sid, slot, ids.join(",")));
+            }
+        }
+    }
     format!(
-        "{{\"causal\":[{}],\"branchialEvents\":[{}]}}",
+        "{{\"causal\":[{}],\"branchialEvents\":[{}],\"creators\":[{}]}}",
         causal.join(","),
-        branchial.join(",")
+        branchial.join(","),
+        creators.join(",")
     )
 }
 
