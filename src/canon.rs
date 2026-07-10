@@ -264,6 +264,21 @@ pub fn canonicalize(state: &State) -> Canon {
 /// visited (pinned by tests to keep the search polynomial on the shapes
 /// the engine produces).
 pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
+    canonicalize_impl(state, u64::MAX).expect("unlimited leaf budget cannot abort")
+}
+
+/// Canonicalize with a hard cap on IR leaves visited, returning `None` on
+/// exhaustion. The scan-safety primitive: a symmetric state (a pure
+/// out-star) costs k! leaves — fine for a human-chosen rule, fatal inside
+/// a scan over thousands of rules. Exhaustion must abort the whole probe
+/// run (never continue with a possibly-duplicate state — the dedup-safety
+/// note on `isomorphic` applies equally here). `canonicalize` is exactly
+/// this with an unlimited budget, byte-identical by construction.
+pub fn canonicalize_budgeted(state: &State, max_leaves: u64) -> Option<Canon> {
+    canonicalize_impl(state, max_leaves).map(|(c, _)| c)
+}
+
+fn canonicalize_impl(state: &State, max_leaves: u64) -> Option<(Canon, u64)> {
     // Split into connected components (arity-0 edges carry no vertices and
     // pass straight through to the form).
     let verts = state.vertices();
@@ -274,14 +289,14 @@ pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
             next_vertex: 0,
         };
         let edge_slots = (0..state.edges.len()).collect();
-        return (
+        return Some((
             Canon {
                 form,
                 vertex_map: DetMap::default(),
                 edge_slots,
             },
             1,
-        );
+        ));
     }
 
     // union-find over vertex positions
@@ -312,7 +327,7 @@ pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
     }
 
     if roots.len() == 1 {
-        return canonicalize_connected(state, None);
+        return canonicalize_connected(state, None, max_leaves);
     }
 
     // Per-component sub-states (raw edge indices retained); arity-0 edges
@@ -339,7 +354,8 @@ pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
                 .cloned()
                 .collect(),
         );
-        let (canon, leaves) = canonicalize_connected(&sub, None);
+        let remaining = max_leaves.checked_sub(total_leaves)?;
+        let (canon, leaves) = canonicalize_connected(&sub, None, remaining)?;
         total_leaves += leaves;
         comps.push(Comp {
             canon,
@@ -369,7 +385,11 @@ pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
         }
         offset += comp.canon.vertex_map.len() as u32;
     }
-    finish_from_vertex_map(state, vertex_map, total_leaves.max(1))
+    Some(finish_from_vertex_map(
+        state,
+        vertex_map,
+        total_leaves.max(1),
+    ))
 }
 
 /// Total edge order used everywhere: (arity, vertex sequence).
@@ -479,6 +499,8 @@ struct IrCtx<'a> {
     /// best leaf so far: (sorted edge list, label_colors, labels per position)
     best: Option<(Vec<Edge>, Vec<u64>, Vec<u32>)>,
     leaves: u64,
+    /// Leaf budget; exceeding it aborts the search (scan safety).
+    max_leaves: u64,
 }
 
 /// The IR search. Branching discipline (normative, the witness depends on
@@ -486,7 +508,8 @@ struct IrCtx<'a> {
 /// id; branch over members in ascending raw-vertex-id order; individualize,
 /// re-refine, recurse; keep the minimal leaf by (edge list, label_colors),
 /// first-found winning ties.
-fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) {
+/// Returns `false` iff the leaf budget was exhausted (search aborted).
+fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) -> bool {
     let n = classes.len();
     assert!(depth <= n + 1, "IR search exceeded depth bound");
     refine_exact(ctx.edges, ctx.vidx, &mut classes);
@@ -495,6 +518,9 @@ fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) {
     if k == n {
         // discrete: label = class id
         ctx.leaves += 1;
+        if ctx.leaves > ctx.max_leaves {
+            return false;
+        }
         let labels: Vec<u32> = classes.iter().map(|&c| c as u32).collect();
         let mut edge_list: Vec<Edge> = ctx
             .edges
@@ -517,7 +543,7 @@ fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) {
             Some((be, bc, _)) if (be, bc) <= (&candidate_key.0, &candidate_key.1) => {}
             _ => ctx.best = Some(candidate_key),
         }
-        return;
+        return true;
     }
 
     // target cell: smallest non-singleton class, ties by smallest class id
@@ -536,14 +562,21 @@ fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) {
         if classes[pos] == target {
             let mut branch = classes.clone();
             branch[pos] = k; // fresh class; next refine rank-normalizes
-            ir_search(ctx, branch, depth + 1);
+            if !ir_search(ctx, branch, depth + 1) {
+                return false;
+            }
         }
     }
+    true
 }
 
 /// Canonicalize a connected state (no component decomposition). `colors`
 /// seeds refinement in colored mode.
-fn canonicalize_connected(state: &State, colors: Option<&[u64]>) -> (Canon, u64) {
+fn canonicalize_connected(
+    state: &State,
+    colors: Option<&[u64]>,
+    max_leaves: u64,
+) -> Option<(Canon, u64)> {
     let verts = state.vertices();
     let n = verts.len();
     let vidx: DetMap<Vertex, usize> = verts.iter().enumerate().map(|(i, &v)| (v, i)).collect();
@@ -568,8 +601,11 @@ fn canonicalize_connected(state: &State, colors: Option<&[u64]>) -> (Canon, u64)
         input_colors: colors,
         best: None,
         leaves: 0,
+        max_leaves,
     };
-    ir_search(&mut ctx, init_classes, 0);
+    if !ir_search(&mut ctx, init_classes, 0) {
+        return None;
+    }
     let (_, _, labels) = ctx.best.expect("search visited no leaves");
 
     let vertex_map: DetMap<Vertex, Vertex> = ctx
@@ -578,7 +614,7 @@ fn canonicalize_connected(state: &State, colors: Option<&[u64]>) -> (Canon, u64)
         .enumerate()
         .map(|(pos, &v)| (v, labels[pos]))
         .collect();
-    finish_from_vertex_map(state, vertex_map, ctx.leaves)
+    Some(finish_from_vertex_map(state, vertex_map, ctx.leaves))
 }
 
 /// Colored canonization: refinement seeded by exact per-vertex colors,
@@ -591,7 +627,8 @@ fn canonicalize_connected(state: &State, colors: Option<&[u64]>) -> (Canon, u64)
 pub fn canonicalize_colored(state: &State, color: &dyn Fn(Vertex) -> u64) -> ColoredCanon {
     let verts = state.vertices();
     let cols: Vec<u64> = verts.iter().map(|&v| color(v)).collect();
-    let (canon, _) = canonicalize_connected(state, Some(&cols));
+    let (canon, _) = canonicalize_connected(state, Some(&cols), u64::MAX)
+        .expect("unlimited leaf budget cannot abort");
     let n = verts.len();
     let mut label_colors = vec![0u64; n];
     for (pos, &v) in verts.iter().enumerate() {

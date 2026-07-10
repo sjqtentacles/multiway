@@ -256,3 +256,47 @@ fn evolve_uses_canonical_dedup() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// E1: budgeted canonization (scan safety)
+
+use multiway::canon::canonicalize_budgeted;
+
+/// A directed out-star is the IR pathology: refinement cannot split the
+/// spoke endpoints, so the search visits k! leaves. star-20 = 20! ≈ 2.4e18
+/// leaves unpruned — a scan hitting one such state would hang forever.
+/// The budget must abort cheaply.
+#[test]
+fn star_canonization_hits_leaf_budget() {
+    let edges: Vec<Vec<u32>> = (1..=20).map(|i| vec![0, i]).collect();
+    let star = State::new(edges);
+    assert!(
+        canonicalize_budgeted(&star, 1000).is_none(),
+        "star-20 must exhaust a 1000-leaf budget"
+    );
+    // small stars fit comfortably
+    let edges: Vec<Vec<u32>> = (1..=4).map(|i| vec![0, i]).collect();
+    assert!(canonicalize_budgeted(&State::new(edges), 1000).is_some());
+}
+
+/// With an unlimited budget the budgeted path is the same computation:
+/// form, witness, and slots all identical.
+#[test]
+fn prop_budgeted_max_agrees_with_canonicalize() {
+    prop(
+        SEED ^ 3,
+        "prop_budgeted_max_agrees_with_canonicalize",
+        |rng, _| {
+            let s = gen_state(rng, &StateCfg::oracle());
+            let a = canonicalize(&s);
+            let b = canonicalize_budgeted(&s, u64::MAX).expect("unlimited budget aborted");
+            assert_eq!(a.form, b.form);
+            assert_eq!(a.edge_slots, b.edge_slots);
+            let mut am: Vec<(u32, u32)> = a.vertex_map.iter().map(|(k, v)| (*k, *v)).collect();
+            let mut bm: Vec<(u32, u32)> = b.vertex_map.iter().map(|(k, v)| (*k, *v)).collect();
+            am.sort_unstable();
+            bm.sort_unstable();
+            assert_eq!(am, bm);
+        },
+    );
+}

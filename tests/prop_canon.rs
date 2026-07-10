@@ -272,3 +272,41 @@ fn iso_budget_exhausts_on_pathological_stars() {
     let shrunk = shrink_state(a4.clone(), |s| s.edge_count() >= 2);
     assert_eq!(shrunk.edge_count(), 2);
 }
+
+// ---------------------------------------------------------------------------
+// E1: fixed-point integer log2 (scan scoring must never touch libm)
+
+use multiway::det::log2_milli;
+
+/// Reference values pinned forever (like mix): scores derived from this
+/// function order the atlas, so its bytes may never drift.
+#[test]
+fn log2_milli_reference_values() {
+    assert_eq!(log2_milli(0), 0);
+    assert_eq!(log2_milli(1), 0);
+    assert_eq!(log2_milli(2), 1000);
+    assert_eq!(log2_milli(1024), 10_000);
+    assert_eq!(log2_milli(3), 1584); // floor(log2(3)*1000) = floor(1584.96)
+    assert_eq!(log2_milli(1_000_000), 19_931); // log2(1e6) ≈ 19.93157
+    assert_eq!(log2_milli(u128::MAX), 127_999); // floor(log2(2^128 - 1) * 1000)
+}
+
+#[test]
+fn prop_log2_milli_monotone_and_exact_on_powers() {
+    prop(
+        SEED ^ 5,
+        "prop_log2_milli_monotone_and_exact_on_powers",
+        |rng, _| {
+            let a = rng.next_u64() as u128;
+            let b = rng.next_u64() as u128;
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            assert!(log2_milli(lo) <= log2_milli(hi), "not monotone");
+            let p = rng.range_usize(0, 127) as u32;
+            assert_eq!(
+                log2_milli(1u128 << p),
+                p as u64 * 1000,
+                "power of two inexact"
+            );
+        },
+    );
+}

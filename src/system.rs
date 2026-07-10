@@ -358,9 +358,16 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         mw.stats.phase_b_ns += t.elapsed_ns();
 
         // Phase C: match sets for the new layer, optionally parallel;
-        // assembled in pending (= new-state id) order.
+        // assembled in pending (= new-state id) order. Skipped entirely on
+        // the final step — the frontier is dead after the loop, and at
+        // depth 6 the last layer's match sets are 93% of all delta work
+        // (~130 MB) computed only to be dropped.
         let t = ProfTimer::start();
-        frontier = phase_c(rule, &frontier, &expanded, &pending, opts, &mut mw.stats);
+        frontier = if step < steps {
+            phase_c(rule, &frontier, &expanded, &pending, opts, &mut mw.stats)
+        } else {
+            Vec::new()
+        };
         mw.stats.phase_c_ns += t.elapsed_ns();
 
         // Serial teardown of the expansion buffers is real time at wide

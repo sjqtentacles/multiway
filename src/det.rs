@@ -146,3 +146,36 @@ mod tests {
         assert_ne!(v2, 0x2fe6bb0dd43b9548);
     }
 }
+
+/// Fixed-point base-2 logarithm in milli-units: `log2_milli(1024)` is
+/// `10_000`. Returns `floor(log2(x) * 1000)`; `0` for `x <= 1`.
+///
+/// Pure integer arithmetic — integer part via `leading_zeros`, fraction
+/// via 20 rounds of Q32 mantissa squaring — so the result is
+/// bit-identical on every platform and toolchain, with no libm anywhere.
+/// Scan scores derived from this function ORDER the atlas; like [`mix`],
+/// its outputs are pinned by reference tests and may never drift.
+pub fn log2_milli(x: u128) -> u64 {
+    if x <= 1 {
+        return 0;
+    }
+    let shift = 127 - x.leading_zeros();
+    let int_part = shift as u64;
+    // Q32 mantissa in [2^32, 2^33): shift x so its MSB lands at bit 32.
+    let mut m: u128 = if shift >= 32 {
+        x >> (shift - 32)
+    } else {
+        x << (32 - shift)
+    };
+    // 20 fraction bits by repeated squaring (m^2 < 2^66 — no overflow).
+    let mut frac: u64 = 0;
+    for _ in 0..20 {
+        m = (m * m) >> 32;
+        frac <<= 1;
+        if m >= (1u128 << 33) {
+            frac |= 1;
+            m >>= 1;
+        }
+    }
+    int_part * 1000 + ((frac * 1000) >> 20)
+}

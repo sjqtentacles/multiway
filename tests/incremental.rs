@@ -126,15 +126,20 @@ fn evolve_incremental_bit_identical() {
 }
 
 /// Laziness telemetry: one full search (the initial state), one delta per
-/// NEW canonical state — merged children never get match sets.
+/// NEW canonical state — merged children never get match sets, and (A2)
+/// neither do final-layer states, whose match sets could never be used:
+/// the frontier is dead after the last step. Strictly lazier than v0.2.
 #[test]
 fn single_full_search_telemetry() {
     let rule = parse_rule("{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}").unwrap();
     let init = parse_state("{{0,0},{0,0}}").unwrap();
     let mw = evolve(&rule, init, 4);
     assert_eq!(mw.stats.full_match_calls, 1);
-    // 179 states total, minus the initial one: every new state got a delta
-    assert_eq!(mw.stats.delta_match_calls, mw.states.len() - 1);
+    // 179 states, minus the initial one, minus the 156 final-layer states
+    // whose match sets would be computed only to be dropped: 22 deltas.
+    let last_layer = mw.layers.last().unwrap().len();
+    assert_eq!(mw.stats.delta_match_calls, mw.states.len() - 1 - last_layer);
+    assert_eq!(mw.states.len() - 1 - last_layer, 22); // explicit, for readers
 }
 
 /// causal::run switched to the delta path — its deps must not move a byte.
