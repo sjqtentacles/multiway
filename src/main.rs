@@ -33,6 +33,7 @@ OPTIONS:
   --json PATH        write the data bundle as JSON
   --html PATH        write a self-contained interactive viewer
   --quiet            suppress the stats table
+  --ascii            print the multiway DAG as box-drawing text
   --threads N        parallel evolve workers (default 1; output is
                      byte-identical for every N)
   --order MODE       causal updating order: sequential (default) or
@@ -88,6 +89,7 @@ fn main() {
     let mut json_path: Option<String> = None;
     let mut html_path: Option<String> = None;
     let mut quiet = false;
+    let mut ascii = false;
     let mut mode_confluence = false;
     let mut mode_lint = false;
     let mut check_cfg = CheckCfg::default();
@@ -156,6 +158,10 @@ fn main() {
             }
             "--quiet" => {
                 quiet = true;
+                i += 1;
+            }
+            "--ascii" => {
+                ascii = true;
                 i += 1;
             }
             "--threads" => {
@@ -482,6 +488,9 @@ fn main() {
             "{}",
             report::stats_text(&rule.text, init_s.trim(), &mw, causal_run.as_ref())
         );
+    }
+    if ascii {
+        print!("{}", multiway::ascii::render_multiway(&mw, 100));
     }
 
     let json = bundle_json(&rule.text, init_s.trim(), &mw, causal_run.as_ref());

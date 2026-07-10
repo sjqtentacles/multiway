@@ -40,6 +40,7 @@
 
 #![deny(missing_docs)]
 
+pub mod ascii;
 pub mod atlas;
 pub mod canon;
 pub mod causal;

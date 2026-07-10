@@ -1,0 +1,6 @@
+step 0 step 1 step 2
+●0─────●1
+  ╲
+   ────●2
+
+↩ 4 back-merges into earlier layers (not drawn)
