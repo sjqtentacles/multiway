@@ -8,7 +8,7 @@
 
 use crate::canon::{canonicalize, Canon};
 use crate::det::DetMap;
-use crate::hypergraph::{State, Vertex};
+use crate::hypergraph::State;
 use crate::matcher::{apply_full, delta_matches, find_matches, Application, Match};
 use crate::rule::Rule;
 use crate::store::{EdgeId, EdgeStore};
@@ -64,9 +64,6 @@ pub struct StateRec {
     /// Raw edge index -> canonical slot (indexes `form_ids` exactly as it
     /// indexed the form's edge list) — token identity for the TEG.
     pub edge_slots: Vec<usize>,
-    /// Raw vertex -> canonical label. Retained for library completeness;
-    /// nothing in the engine reads it after evolve.
-    pub vertex_map: DetMap<Vertex, Vertex>,
 }
 
 /// One rewrite event between canonical states.
@@ -228,7 +225,6 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         state: init,
         form_ids: form_ids0,
         edge_slots: c0.edge_slots,
-        vertex_map: c0.vertex_map,
     });
     mw.layers.push(vec![0]);
 
@@ -295,7 +291,6 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                             state: child,
                             form_ids: key,
                             edge_slots: canon.edge_slots,
-                            vertex_map: canon.vertex_map,
                         });
                         new_layer.push(cid);
                         cid
