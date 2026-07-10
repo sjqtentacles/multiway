@@ -78,7 +78,7 @@ pub fn run_json(
 /// Encode a result string for the ABI: 4-byte u32 LE length prefix +
 /// UTF-8 payload, in an exact-capacity boxed slice (the wasm side hands
 /// the pointer to JS, which reads the prefix then the payload and calls
-/// [`mw_dealloc`] with `4 + len`).
+/// `mw_dealloc` with `4 + len`).
 pub fn encode_result(s: &str) -> Box<[u8]> {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(4 + bytes.len());
@@ -103,7 +103,7 @@ pub fn decode_result(buf: &[u8]) -> String {
 /// Allocate `len` bytes for the host to write an input string into.
 /// # Safety
 /// The returned pointer owns exactly `len` bytes; the host must hand it
-/// back via [`mw_run`] (which frees it) or [`mw_dealloc`] with the same
+/// back via `mw_run` (which frees it) or `mw_dealloc` with the same
 /// length.
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
@@ -114,7 +114,7 @@ pub extern "C" fn mw_alloc(len: usize) -> *mut u8 {
     ptr
 }
 
-/// Free a buffer previously returned by [`mw_alloc`] or [`mw_run`].
+/// Free a buffer previously returned by `mw_alloc` or `mw_run`.
 /// # Safety
 /// `ptr` must come from those functions with the exact same `len`
 /// (for `mw_run` results: `4 + payload length`).
