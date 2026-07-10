@@ -14,3 +14,17 @@ categories = ["science", "mathematics", "algorithms"]
 
 [profile.release]
 opt-level = 3
+
+# The playground's .wasm build (C0): size-optimized, panic=abort (input-
+# shaped failures are all caught pre-evolution; a trap = engine bug, and
+# the page re-instantiates from cached bytes). Built via
+#   cargo rustc --profile wasm --target wasm32-unknown-unknown --crate-type cdylib
+# so the native targets and the 1.63 matrix never see this profile or a
+# [lib] crate-type change (the wasm CI job runs on stable).
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

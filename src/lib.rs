@@ -58,3 +58,4 @@ pub mod stats;
 pub mod store;
 pub mod system;
 pub mod teg;
+pub mod wasm;
