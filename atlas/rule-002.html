@@ -1,0 +1,1008 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>multiway — hypergraph multiway explorer</title>
+<style>
+  .viz-root {
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --ink-1: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #6b6963;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;   /* states / events */
+    --series-2: #1baf7a;   /* causal accent */
+    --series-3: #eda100;   /* initial condition */
+    --series-5: #4a3aa7;   /* branchial */
+    --ramp-0: #86b6ef; --ramp-1: #5598e7; --ramp-2: #3987e5;
+    --ramp-3: #2a78d6; --ramp-4: #256abf; --ramp-5: #1c5cab; --ramp-6: #184f95;
+  }
+  /* dark tokens apply in auto mode (OS dark, no manual override) … */
+  @media (prefers-color-scheme: dark) {
+    .viz-root:not([data-theme="light"]) {
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --ink-1: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #199e70;
+      --series-3: #c98500;
+      --series-5: #9085e9;
+      --ramp-0: #cde2fb; --ramp-1: #9ec5f4; --ramp-2: #6da7ec;
+      --ramp-3: #3987e5; --ramp-4: #256abf; --ramp-5: #1c5cab; --ramp-6: #184f95;
+    }
+  }
+  /* … and when forced via the theme toggle, regardless of the OS scheme */
+  .viz-root[data-theme="dark"] {
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --ink-1: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #199e70;
+    --series-3: #c98500;
+    --series-5: #9085e9;
+    --ramp-0: #cde2fb; --ramp-1: #9ec5f4; --ramp-2: #6da7ec;
+    --ramp-3: #3987e5; --ramp-4: #256abf; --ramp-5: #1c5cab; --ramp-6: #184f95;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body.viz-root {
+    background: var(--page);
+    color: var(--ink-1);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  button:focus-visible, input:focus-visible, canvas:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--series-1); outline-offset: 2px;
+  }
+  header {
+    padding: 10px 16px 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; font-weight: 650; letter-spacing: .01em; }
+  header .rule {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46ch;
+  }
+  header .stats { margin-left: auto; display: flex; gap: 14px; color: var(--ink-2); font-size: 12px; flex-wrap: wrap; }
+  header .stats b { color: var(--ink-1); font-weight: 650; font-variant-numeric: tabular-nums; }
+  header .stats .badge {
+    border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; background: var(--surface-1);
+  }
+  nav {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 6px 16px; border-bottom: 1px solid var(--border);
+  }
+  nav button {
+    font: inherit; color: var(--ink-2); background: none; border: 1px solid transparent;
+    border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  }
+  nav button:hover { color: var(--ink-1); }
+  nav button[aria-selected="true"] {
+    color: var(--ink-1); border-color: var(--border); background: var(--surface-1); font-weight: 600;
+  }
+  nav .controls { display: flex; align-items: center; gap: 6px; margin-left: 10px; }
+  nav .controls button { padding: 3px 8px; font-size: 12px; }
+  #scrub { width: 130px; accent-color: var(--series-1); }
+  #stepLabel { color: var(--ink-muted); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 3.5ch; }
+  nav .legend { margin-left: auto; display: flex; gap: 16px; color: var(--ink-muted); font-size: 12px; align-items: center; flex-wrap: wrap; }
+  nav .legend .sw { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  #stage canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    background: var(--surface-1); cursor: grab; touch-action: none;
+  }
+  #stage canvas.dragging { cursor: grabbing; }
+  aside {
+    width: 340px; border-left: 1px solid var(--border);
+    padding: 12px 14px; overflow: auto; background: var(--page);
+  }
+  aside h2 { font-size: 12px; font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+  aside .meta { color: var(--ink-2); font-size: 12px; margin-bottom: 8px; }
+  aside .meta b { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+  #inspector { width: 100%; height: 300px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; }
+  aside details { margin-top: 10px; color: var(--ink-2); }
+  aside summary { cursor: pointer; font-size: 12px; }
+  aside pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+    color: var(--ink-2); white-space: pre-wrap; word-break: break-all; margin-top: 6px;
+  }
+  #tip {
+    position: absolute; pointer-events: none; display: none; z-index: 5;
+    background: var(--surface-1); color: var(--ink-1);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+    font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.25);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  footer { padding: 5px 16px; color: var(--ink-muted); font-size: 11.5px; border-top: 1px solid var(--border); }
+  @media (max-width: 700px) {
+    main { flex-direction: column; }
+    aside {
+      width: 100%; flex: 0 0 auto; max-height: 45%;
+      border-left: none; border-top: 1px solid var(--border);
+    }
+    header .rule { max-width: 100%; }
+  }
+#playPanel { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center;
+  padding: .5rem .9rem; border-bottom: 1px solid var(--baseline);
+  font-size: .82rem; }
+#playPanel[hidden] { display: none; }
+#playPanel label { display: inline-flex; align-items: center; gap: .3rem; color: var(--ink-2); }
+#playPanel input[type=text] { width: 22rem; max-width: 44vw; font-family: var(--mono, monospace); }
+#playPanel input[type=number] { width: 4rem; }
+#playPanel input, #playPanel select, #playPanel button {
+  background: var(--surface-1); color: var(--ink-1);
+  border: 1px solid var(--baseline); border-radius: 4px; padding: .2rem .45rem; }
+#playPanel button { cursor: pointer; }
+#playPanel button:disabled { opacity: .5; cursor: wait; }
+#pgErr { color: var(--series-4, #c03040); font-weight: 600; }
+.pg-hint { color: var(--ink-muted); }
+</style>
+</head>
+<body class="viz-root">
+<header>
+  <h1>multiway</h1>
+  <span class="rule" id="ruleText" title=""></span>
+  <div class="stats" id="stats" aria-live="polite"></div>
+</header>
+<section id="playPanel" hidden aria-label="playground controls">
+  <label>rule <input id="pgRule" type="text" spellcheck="false"
+    value="{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}"></label>
+  <label>init <input id="pgInit" type="text" spellcheck="false" value="{{0,0},{0,0}}"></label>
+  <label>steps <input id="pgSteps" type="number" min="0" max="8" value="4"
+    title="capped at 8: the classic rule already reaches ~400k states at depth 7"></label>
+  <label>causal <input id="pgCausal" type="number" min="0" max="500" value="12"></label>
+  <label>order <select id="pgOrder">
+    <option value="sequential" selected>sequential</option>
+    <option value="standard">standard</option>
+  </select></label>
+  <button id="pgRun">Run</button>
+  <button id="pgCopy" title="copy the exact bundle JSON — byte-identical to the native CLI's --json">copy bundle JSON</button>
+  <span id="pgErr" role="alert"></span>
+  <span class="pg-hint">runs entirely in your browser (WebAssembly) — deep steps can take a while; the page may freeze during a run</span>
+</section>
+<nav role="tablist" aria-label="graph views">
+  <button id="tabMw" role="tab" aria-selected="true" aria-controls="stage">Multiway graph</button>
+  <button id="tabCa" role="tab" aria-selected="false" aria-controls="stage">Causal graph</button>
+  <button id="tabTe" role="tab" aria-selected="false" aria-controls="stage">Token-event</button>
+  <span class="controls" id="mwControls">
+    <button id="playBtn" aria-label="play evolution" title="play / pause (P)">&#9654;</button>
+    <input id="scrub" type="range" min="0" max="0" step="1" value="0" aria-label="evolution step">
+    <span id="stepLabel"></span>
+  </span>
+  <div class="legend" id="legend"></div>
+  <span class="controls">
+    <button id="themeBtn" aria-label="theme: auto" title="cycle theme">theme: auto</button>
+    <button id="exportBtn" aria-label="export PNG" title="download the current graph as PNG">PNG</button>
+  </span>
+</nav>
+<main>
+  <div id="stage" role="tabpanel" aria-label="graph canvas">
+    <canvas id="cv" role="img" aria-label="multiway graph" tabindex="0"></canvas>
+    <div id="tip"></div>
+  </div>
+  <aside>
+    <h2>Inspector</h2>
+    <div class="meta" id="meta">Click a state to inspect its hypergraph.</div>
+    <canvas id="inspector" role="img" aria-label="hypergraph of the selected state" width="620" height="600"></canvas>
+    <details><summary>Edge list</summary><pre id="edgeDump"></pre></details>
+  </aside>
+</main>
+<footer>drag to pan · scroll / pinch to zoom · double-click to reset · click or tap a state to inspect · keys: <b>C</b> cycle tabs · <b>&#8592;&#8594;&#8593;&#8595;</b> walk states · <b>P</b> play · <b>R</b> reset view · <b>+/&#8722;</b> zoom</footer>
+
+<script>
+/* Baked by the CLI: --html inlines the bundle; --playground bakes null
+   and the wasm panel drives loadData() per run. */
+const BOOT_DATA = {"rule":"{{a,b}}->{{a,c},{c,b}}","init":"{{0,1},{0,1}}","multiway":{"states":[{"id":0,"step":0,"edges":[[0,1],[0,1]],"paths":"1"},{"id":1,"step":1,"edges":[[0,1],[0,2],[2,1]],"paths":"2"},{"id":2,"step":2,"edges":[[0,2],[2,1],[0,3],[3,1]],"paths":"2"},{"id":3,"step":2,"edges":[[0,1],[2,1],[0,3],[3,2]],"paths":"4"},{"id":4,"step":3,"edges":[[2,1],[0,3],[3,1],[0,4],[4,2]],"paths":"12"},{"id":5,"step":3,"edges":[[0,1],[0,3],[3,2],[2,4],[4,1]],"paths":"12"}],"events":[{"from":0,"to":1,"step":1},{"from":0,"to":1,"step":1},{"from":1,"to":2,"step":2},{"from":1,"to":3,"step":2},{"from":1,"to":3,"step":2},{"from":2,"to":4,"step":3},{"from":2,"to":4,"step":3},{"from":2,"to":4,"step":3},{"from":2,"to":4,"step":3},{"from":3,"to":4,"step":3},{"from":3,"to":5,"step":3},{"from":3,"to":5,"step":3},{"from":3,"to":5,"step":3}],"branchial":[[2,3],[4,5]],"layers":[[0],[1],[2,3],[4,5]],"sharing":[{"step":0,"treeNodes":"1","canonical":1},{"step":1,"treeNodes":"2","canonical":1},{"step":2,"treeNodes":"6","canonical":2},{"step":3,"treeNodes":"24","canonical":2}],"backMerges":0},"teg":{"causal":[[0,1],[0,2],[0,3],[0,10],[1,4],[1,5],[1,6],[1,7],[1,11],[1,12],[2,4],[2,5],[2,6],[2,7],[2,11],[2,12],[3,8],[3,9],[4,12],[4,13],[5,11],[5,13]],"branchialEvents":[],"creators":[[1,0,[1,2]],[1,2,[1,2]],[2,1,[1,2]],[2,3,[1,2]],[3,0,[1,2,4]],[3,2,[4,5]],[3,3,[1,2,5]],[4,0,[1,2,3,4,6,8]],[4,1,[1,2,3,10]],[4,2,[4,5,6,7,8,9]],[4,3,[1,2,3,10]],[4,4,[1,2,3,5,7,9]],[5,0,[1,2,4,12]],[5,2,[4,5,12,13]],[5,3,[4,5,11,13]],[5,4,[1,2,5,11]]]},"causal":null};
+
+/* ---------- theme tokens (read live so scheme switches re-style) ---------- */
+function tok(name) { return getComputedStyle(document.body).getPropertyValue(name).trim(); }
+const RAMP_N = 7;
+function stepColor(step, maxStep) {
+  const i = maxStep <= 0 ? 3 : Math.round(step / maxStep * (RAMP_N - 1));
+  return tok('--ramp-' + Math.max(0, Math.min(RAMP_N - 1, i)));
+}
+const fmt = s => { try { return BigInt(s).toLocaleString('en-US'); } catch (e) { return String(s); } };
+
+/* ---------- data bindings (re-assigned by loadData) ---------- */
+let DATA = null, MW = null, TEG = null;
+let hasTeg = false, merged = false, maxStep = 0;
+function renderHeader() {
+  document.getElementById('ruleText').textContent = DATA.rule + '   from ' + DATA.init;
+  document.getElementById('ruleText').title = DATA.rule + ' from ' + DATA.init;
+  const bits = [
+    '<span><b>' + MW.states.length.toLocaleString('en-US') + '</b> canonical states</span>',
+    '<span><b>' + MW.events.length.toLocaleString('en-US') + '</b> events</span>',
+    '<span><b>' + MW.branchial.length.toLocaleString('en-US') + '</b> branchial pairs</span>'];
+  const last = MW.sharing.length ? MW.sharing[MW.sharing.length - 1] : null;
+  if (merged) {
+    bits.push('<span class="badge">back-merges: <b>' + MW.backMerges.toLocaleString('en-US') + '</b></span>');
+  } else if (last && last.canonical) {
+    const ratio = Number(last.treeNodes) / last.canonical;
+    bits.push('<span>depth ' + last.step + ': <b>' + fmt(last.treeNodes) + '</b> tree nodes → <b>' +
+      last.canonical.toLocaleString('en-US') + '</b> shared (<b>' + ratio.toFixed(1) + '×</b>)</span>');
+  }
+  document.getElementById('stats').innerHTML = bits.join('');
+}
+
+/* ---------- layouts ---------- */
+function layeredLayout(nodes, edges, colOf, W, H) {
+  const pad = { x: 70, y: 34 };
+  let nCols = 1;
+  nodes.forEach(n => { const c = colOf(n) + 1; if (c > nCols) nCols = c; }); // loop, not spread: safe at 10^5+
+  const cols = Array.from({ length: nCols }, () => []);
+  nodes.forEach(n => cols[colOf(n)].push(n));
+  const colX = c => nCols === 1 ? W / 2 : pad.x + c * (W - 2 * pad.x) / (nCols - 1);
+  // initial order = insertion; refine with 3 barycenter sweeps over parents
+  const parents = new Map(); nodes.forEach(n => parents.set(n.id, []));
+  edges.forEach(e => { if (parents.has(e.to)) parents.get(e.to).push(e.from); });
+  const pos = new Map();
+  for (let sweep = 0; sweep < 3; sweep++) {
+    cols.forEach((col, c) => {
+      if (sweep > 0 && c > 0) {
+        col.sort((a, b) => {
+          const ya = avg(parents.get(a.id).map(p => pos.get(p) ? pos.get(p).y : 0));
+          const yb = avg(parents.get(b.id).map(p => pos.get(p) ? pos.get(p).y : 0));
+          return ya - yb;
+        });
+      }
+      const n = col.length;
+      col.forEach((node, i) => {
+        pos.set(node.id, { x: colX(c), y: pad.y + (i + 1) * (H - 2 * pad.y) / (n + 1), col: c, row: i, colSize: n });
+      });
+    });
+  }
+  return pos;
+}
+function avg(a) { return a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0; }
+// uniform-grid spatial index for pick(); linear scan is fine below 2000 nodes
+const GRID = 48, PICK_R = 11;
+function buildIndex(pos) {
+  if (!pos || pos.size <= 2000) return null;
+  const cells = new Map();
+  pos.forEach((p, id) => {
+    const key = Math.floor(p.x / GRID) + ':' + Math.floor(p.y / GRID);
+    let cell = cells.get(key);
+    if (!cell) cells.set(key, cell = []);
+    cell.push(id);
+  });
+  return cells;
+}
+
+/* ---------- main canvas with pan/zoom ---------- */
+const cv = document.getElementById('cv'), stage = document.getElementById('stage'), tip = document.getElementById('tip');
+const view = { k: 1, tx: 0, ty: 0 };
+let mode = 'mw';          // 'mw' | 'ca' | 'te'
+let selected = null;      // selected state id (mw mode)
+let hover = null;
+let currentStep = maxStep; // evolution scrubber position (mw mode)
+let mwPos = null, caPos = null, caNodes = null, caDepth = null;
+let tePos = null, teNodes = null, teDepth = null, teMaxDepth = 0;
+let mwIdx = null, caIdx = null, teIdx = null;
+
+function sizeCanvas(c) {
+  const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  c.width = Math.max(1, r.width * dpr); c.height = Math.max(1, r.height * dpr);
+  return { w: r.width, h: r.height, dpr };
+}
+function nodeRadius(colSize, H) { return Math.max(2.5, Math.min(9, (H / Math.max(1, colSize)) * 0.22)); }
+
+function computeLayouts() {
+  const r = cv.getBoundingClientRect(), W = r.width, H = r.height;
+  mwPos = layeredLayout(MW.states, MW.events, s => s.step, W, H);
+  mwIdx = buildIndex(mwPos);
+  if (DATA.causal) {
+    caNodes = Array.from({ length: DATA.causal.nEvents }, (_, i) => ({ id: i }));
+    caDepth = new Array(DATA.causal.nEvents).fill(0);
+    DATA.causal.deps.forEach(([a, b]) => { caDepth[b] = Math.max(caDepth[b], caDepth[a] + 1); });
+    caPos = layeredLayout(caNodes, DATA.causal.deps.map(([a, b]) => ({ from: a, to: b })), n => caDepth[n.id], W, H);
+    caIdx = buildIndex(caPos);
+  }
+  if (hasTeg) {
+    // event nodes 0..events.length; 0 = initial condition, i+1 = events[i].
+    // longest-path depth by bounded relaxation (the merged TEG may contain cycles).
+    const nEv = MW.events.length + 1;
+    teNodes = Array.from({ length: nEv }, (_, i) => ({ id: i }));
+    teDepth = new Array(nEv).fill(0);
+    let changed = true, pass = 0;
+    while (changed && pass < 256) {
+      pass++; changed = false;
+      TEG.causal.forEach(([a, b]) => {
+        if (a !== b && teDepth[a] + 1 > teDepth[b]) { teDepth[b] = teDepth[a] + 1; changed = true; }
+      });
+    }
+    teMaxDepth = 0;
+    for (let i = 0; i < nEv; i++) if (teDepth[i] > teMaxDepth) teMaxDepth = teDepth[i];
+    tePos = layeredLayout(teNodes, TEG.causal.map(([a, b]) => ({ from: a, to: b })), n => teDepth[n.id], W, H);
+    teIdx = buildIndex(tePos);
+  }
+}
+
+/* ---------- rAF-batched drawing (at most one draw per frame) ---------- */
+let drawPending = false;
+function requestDraw() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => { drawPending = false; draw(); });
+}
+function draw() {
+  const { w: W, h: H, dpr } = sizeCanvas(cv);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = tok('--surface-1'); g.fillRect(0, 0, W, H);
+  if (!DATA) return; // playground before the first Run
+  g.save(); g.translate(view.tx, view.ty); g.scale(view.k, view.k);
+  if (mode === 'mw') drawMultiway(g, W, H);
+  else if (mode === 'ca') drawCausal(g, W, H);
+  else drawTeg(g, W, H);
+  g.restore();
+}
+
+function drawMultiway(g, W, H) {
+  const pos = mwPos, dash = [3 / view.k, 3 / view.k];
+  // column captions (only up to the scrubbed step)
+  g.fillStyle = tok('--ink-muted'); g.font = '11px system-ui, sans-serif'; g.textAlign = 'center';
+  for (let s = 0; s <= Math.min(currentStep, maxStep); s++) {
+    const any = MW.layers[s][0];
+    if (any !== undefined) g.fillText('step ' + s, pos.get(any).x, 16);
+  }
+  // event edges (screen-constant stroke width)
+  g.lineWidth = 1 / view.k;
+  MW.events.forEach(e => {
+    if (e.step > currentStep) return;
+    const a = pos.get(e.from), b = pos.get(e.to);
+    const hi = hover !== null && (e.from === hover || e.to === hover);
+    const fade = e.step < currentStep ? 0.7 : 1;
+    g.strokeStyle = hi ? tok('--series-1') : tok('--baseline');
+    g.globalAlpha = (hi ? 0.9 : 0.35) * fade;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.bezierCurveTo((a.x + b.x) / 2, a.y, (a.x + b.x) / 2, b.y, b.x, b.y);
+    g.stroke();
+  });
+  // branchial pairs (dashed, same-column arcs)
+  g.setLineDash(dash); g.strokeStyle = tok('--series-5');
+  MW.branchial.forEach(([ia, ib]) => {
+    if (MW.states[ia].step > currentStep || MW.states[ib].step > currentStep) return;
+    const a = pos.get(ia), b = pos.get(ib);
+    const hi = hover !== null && (ia === hover || ib === hover);
+    const fade = MW.states[ia].step < currentStep ? 0.7 : 1;
+    g.globalAlpha = (hi ? 0.9 : 0.16) * fade;
+    const bulge = 14 + Math.abs(b.y - a.y) * 0.10;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.quadraticCurveTo(a.x + bulge, (a.y + b.y) / 2, b.x, b.y);
+    g.stroke();
+  });
+  g.setLineDash([]); g.globalAlpha = 1;
+  // nodes (layers older than the scrubbed step are slightly faded)
+  MW.states.forEach(s => {
+    if (s.step > currentStep) return;
+    const p = pos.get(s.id), r = nodeRadius(p.colSize, H);
+    g.globalAlpha = s.step < currentStep ? 0.78 : 1;
+    g.fillStyle = stepColor(s.step, maxStep);
+    g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill();
+    if (s.id === selected || s.id === hover) {
+      g.globalAlpha = 1;
+      g.strokeStyle = tok('--ink-1'); g.lineWidth = 2 / view.k;
+      g.beginPath(); g.arc(p.x, p.y, r + 2, 0, 7); g.stroke();
+    }
+  });
+  g.globalAlpha = 1;
+}
+
+function arrowEdge(g, pa, pb) {
+  g.beginPath();
+  g.moveTo(pa.x, pa.y);
+  g.bezierCurveTo((pa.x + pb.x) / 2, pa.y, (pa.x + pb.x) / 2, pb.y, pb.x, pb.y);
+  g.stroke();
+  const ang = Math.atan2(pb.y - pa.y, (pb.x - pa.x) * 0.4 + 1e-6);
+  g.beginPath();
+  g.moveTo(pb.x, pb.y);
+  g.lineTo(pb.x - 7 * Math.cos(ang - 0.4), pb.y - 7 * Math.sin(ang - 0.4));
+  g.lineTo(pb.x - 7 * Math.cos(ang + 0.4), pb.y - 7 * Math.sin(ang + 0.4));
+  g.closePath();
+  g.fillStyle = g.strokeStyle; g.fill();
+}
+
+function drawCausal(g, W, H) {
+  if (!DATA.causal) return;
+  const pos = caPos;
+  g.fillStyle = tok('--ink-muted'); g.font = '11px system-ui, sans-serif'; g.textAlign = 'center';
+  g.fillText('causal DAG of one evolution — event 0 is the initial condition', W / 2, 16);
+  g.lineWidth = 1.2 / view.k;
+  DATA.causal.deps.forEach(([a, b]) => {
+    const hi = hover !== null && (a === hover || b === hover);
+    g.strokeStyle = hi ? tok('--series-2') : tok('--baseline');
+    g.globalAlpha = hi ? 0.95 : 0.4;
+    arrowEdge(g, pos.get(a), pos.get(b));
+  });
+  g.globalAlpha = 1;
+  caNodes.forEach(n => {
+    const p = pos.get(n.id), r = Math.max(3.5, Math.min(8, nodeRadius(p.colSize, H)));
+    g.fillStyle = n.id === 0 ? tok('--series-3') : tok('--series-2');
+    g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill();
+    if (n.id === hover) {
+      g.strokeStyle = tok('--ink-1'); g.lineWidth = 2 / view.k;
+      g.beginPath(); g.arc(p.x, p.y, r + 2, 0, 7); g.stroke();
+    }
+  });
+}
+
+function drawTeg(g, W, H) {
+  if (!hasTeg) return;
+  const pos = tePos, dash = [3 / view.k, 3 / view.k];
+  g.fillStyle = tok('--ink-muted'); g.font = '11px system-ui, sans-serif'; g.textAlign = 'center';
+  g.fillText('token-event graph across all histories — event 0 is the initial condition', W / 2, 16);
+  g.lineWidth = 1.2 / view.k;
+  TEG.causal.forEach(([a, b]) => {
+    const hi = hover !== null && (a === hover || b === hover);
+    g.strokeStyle = hi ? tok('--series-2') : tok('--baseline');
+    g.globalAlpha = hi ? 0.95 : 0.35;
+    if (a === b) { // self-dependency across histories: small loop
+      const p = pos.get(a);
+      g.beginPath(); g.arc(p.x + 8, p.y - 8, 7, 0, 7); g.stroke();
+    } else {
+      arrowEdge(g, pos.get(a), pos.get(b));
+    }
+  });
+  // branchial event pairs (dashed arcs)
+  g.setLineDash(dash); g.strokeStyle = tok('--series-5'); g.lineWidth = 1 / view.k;
+  TEG.branchialEvents.forEach(([a, b]) => {
+    const pa = pos.get(a), pb = pos.get(b);
+    const hi = hover !== null && (a === hover || b === hover);
+    g.globalAlpha = hi ? 0.9 : 0.16;
+    const bulge = 14 + Math.abs(pb.y - pa.y) * 0.10;
+    g.beginPath();
+    g.moveTo(pa.x, pa.y);
+    g.quadraticCurveTo(pa.x + bulge, (pa.y + pb.y) / 2, pb.x, pb.y);
+    g.stroke();
+  });
+  g.setLineDash([]); g.globalAlpha = 1;
+  teNodes.forEach(n => {
+    const p = pos.get(n.id), r = Math.max(3, Math.min(8, nodeRadius(p.colSize, H)));
+    g.fillStyle = n.id === 0 ? tok('--series-3') : stepColor(teDepth[n.id], teMaxDepth);
+    g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fill();
+    if (n.id === hover) {
+      g.strokeStyle = tok('--ink-1'); g.lineWidth = 2 / view.k;
+      g.beginPath(); g.arc(p.x, p.y, r + 2, 0, 7); g.stroke();
+    }
+  });
+}
+
+/* ---------- picking ---------- */
+function toWorld(mx, my) { return { x: (mx - view.tx) / view.k, y: (my - view.ty) / view.k }; }
+function activePos() { return mode === 'mw' ? mwPos : mode === 'ca' ? caPos : tePos; }
+function pick(mx, my) {
+  const w = toWorld(mx, my), pos = activePos();
+  const idx = mode === 'mw' ? mwIdx : mode === 'ca' ? caIdx : teIdx;
+  if (!pos) return null;
+  let best = null, bd = PICK_R * PICK_R;
+  const test = id => {
+    const p = pos.get(id);
+    const d = (p.x - w.x) * (p.x - w.x) + (p.y - w.y) * (p.y - w.y);
+    if (d < bd) { bd = d; best = id; }
+  };
+  if (idx) {
+    const x0 = Math.floor((w.x - PICK_R) / GRID), x1 = Math.floor((w.x + PICK_R) / GRID);
+    const y0 = Math.floor((w.y - PICK_R) / GRID), y1 = Math.floor((w.y + PICK_R) / GRID);
+    for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+      const cell = idx.get(cx + ':' + cy);
+      if (cell) cell.forEach(test);
+    }
+  } else {
+    pos.forEach((p, id) => test(id));
+  }
+  return best;
+}
+function tipText(id) {
+  if (mode === 'mw') {
+    const s = MW.states[id];
+    return 'state ' + id + ' · step ' + s.step + ' · ' + s.edges.length + ' edges' +
+      (merged ? '' : ' · absorbs ' + fmt(s.paths) + (s.paths === '1' ? ' tree path' : ' tree paths'));
+  }
+  if (mode === 'ca') {
+    return id === 0 ? 'event 0 · initial condition' : 'event ' + id + ' · causal depth ' + caDepth[id];
+  }
+  if (id === 0) return 'event 0 · initial condition';
+  const e = MW.events[id - 1];
+  let s = 'event ' + id + ' (step ' + e.step + ', ' + e.from + '→' + e.to + ')';
+  // D2: multivalued token provenance (guarded — old bundles lack it)
+  if (TEG && TEG.creators && TEG.creators.length) {
+    const co = TEG.creators.filter(([sid]) => sid === e.to);
+    if (co.length) {
+      s += ' · ' + co.length + ' shared token' + (co.length > 1 ? 's' : '') +
+        ' (slot ' + co.map(([, slot, evs]) => slot + ' by events ' + evs.join(',')).join('; ') + ')';
+    }
+  }
+  return s;
+}
+
+/* ---------- interaction (pointer events: mouse, touch, pen) ---------- */
+const pointers = new Map(); // active pointerId -> {x, y}
+let dragging = false, moved = false, lx = 0, ly = 0, pinchD = 0;
+function zoomAt(mx, my, f) {
+  const k2 = Math.max(0.2, Math.min(12, view.k * f)), r = k2 / view.k;
+  view.tx = mx - r * (mx - view.tx);
+  view.ty = my - r * (my - view.ty);
+  view.k = k2; requestDraw();
+}
+function pinchState() {
+  const [a, b] = [...pointers.values()];
+  return { d: Math.hypot(b.x - a.x, b.y - a.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+}
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  if (pointers.size === 1) {
+    dragging = true; moved = false; lx = e.offsetX; ly = e.offsetY;
+    cv.classList.add('dragging');
+  } else if (pointers.size === 2) {
+    pinchD = pinchState().d; moved = true; tip.style.display = 'none';
+  }
+});
+cv.addEventListener('pointermove', e => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  if (pointers.size === 2) { // pinch zoom
+    const p = pinchState();
+    if (pinchD > 0 && p.d > 0) zoomAt(p.mx, p.my, p.d / pinchD);
+    pinchD = p.d;
+    return;
+  }
+  if (dragging && pointers.size === 1) { // one-finger / mouse drag pan
+    const dx = e.offsetX - lx, dy = e.offsetY - ly;
+    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    view.tx += dx; view.ty += dy; lx = e.offsetX; ly = e.offsetY;
+    tip.style.display = 'none'; requestDraw();
+    return;
+  }
+  if (pointers.size > 0) return;
+  const id = pick(e.offsetX, e.offsetY); // hover (mouse only: no buttons down)
+  if (id !== hover) { hover = id; requestDraw(); }
+  if (id !== null) {
+    tip.style.display = 'block';
+    tip.style.left = (e.offsetX + 14) + 'px'; tip.style.top = (e.offsetY + 10) + 'px';
+    tip.textContent = tipText(id);
+  } else tip.style.display = 'none';
+});
+function pointerEnd(e) {
+  const tap = pointers.has(e.pointerId) && pointers.size === 1 && !moved && e.type === 'pointerup';
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinchD = 0;
+  if (pointers.size === 0) { dragging = false; cv.classList.remove('dragging'); }
+  else if (pointers.size === 1) { const [p] = pointers.values(); lx = p.x; ly = p.y; dragging = true; }
+  if (tap && mode === 'mw') { // tap / click selects a state
+    const id = pick(e.offsetX, e.offsetY);
+    if (id !== null) { selected = id; inspect(id); updateHash(); requestDraw(); }
+  }
+}
+cv.addEventListener('pointerup', pointerEnd);
+cv.addEventListener('pointercancel', pointerEnd);
+cv.addEventListener('pointerleave', e => {
+  if (pointers.size === 0) { hover = null; tip.style.display = 'none'; requestDraw(); }
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015));
+}, { passive: false });
+cv.addEventListener('dblclick', () => { view.k = 1; view.tx = 0; view.ty = 0; requestDraw(); });
+
+/* ---------- tabs & legend ---------- */
+const tabMw = document.getElementById('tabMw'), tabCa = document.getElementById('tabCa'), tabTe = document.getElementById('tabTe');
+const mwControls = document.getElementById('mwControls');
+function canvasLabel() {
+  if (mode === 'mw') return 'multiway graph for ' + DATA.rule + ': ' + MW.states.length + ' states, ' + MW.events.length + ' events';
+  if (mode === 'ca') return 'causal graph: ' + DATA.causal.nEvents + ' events, ' + DATA.causal.deps.length + ' dependencies';
+  return 'token-event graph: ' + (MW.events.length + 1) + ' events, ' + TEG.causal.length + ' causal edges';
+}
+function setMode(m) {
+  mode = m; hover = null; tip.style.display = 'none';
+  tabMw.setAttribute('aria-selected', m === 'mw');
+  tabCa.setAttribute('aria-selected', m === 'ca');
+  tabTe.setAttribute('aria-selected', m === 'te');
+  mwControls.style.display = m === 'mw' ? 'flex' : 'none';
+  cv.setAttribute('aria-label', canvasLabel());
+  legend(); updateHash(); requestDraw();
+}
+tabMw.onclick = () => { if (DATA) setMode('mw'); };
+tabCa.onclick = () => { if (DATA && DATA.causal) setMode('ca'); };
+tabTe.onclick = () => { if (DATA && hasTeg) setMode('te'); };
+function applyTabAvailability() {
+  tabCa.style.display = DATA && DATA.causal ? '' : 'none';
+  tabTe.style.display = DATA && hasTeg ? '' : 'none';
+}
+function availableModes() {
+  const ms = ['mw'];
+  if (DATA.causal) ms.push('ca');
+  if (hasTeg) ms.push('te');
+  return ms;
+}
+function sw(color, dashed) {
+  return '<svg class="sw" width="18" height="10">' + (dashed
+    ? '<line x1="1" y1="5" x2="17" y2="5" stroke="' + color + '" stroke-width="2" stroke-dasharray="3,3"/>'
+    : '<circle cx="9" cy="5" r="4" fill="' + color + '"/>') + '</svg>';
+}
+function line(color) {
+  return '<svg class="sw" width="18" height="10"><line x1="1" y1="5" x2="17" y2="5" stroke="' + color + '" stroke-width="2"/></svg>';
+}
+function legend() {
+  const el = document.getElementById('legend');
+  el.innerHTML = mode === 'mw'
+    ? '<span>' + sw(tok('--ramp-1')) + sw(tok('--ramp-4')) + ' state (early → late step)</span>' +
+      '<span>' + line(tok('--baseline')) + ' evolution</span>' +
+      '<span>' + sw(tok('--series-5'), true) + ' branchial pair</span>'
+    : mode === 'ca'
+    ? '<span>' + sw(tok('--series-3')) + ' initial condition</span>' +
+      '<span>' + sw(tok('--series-2')) + ' event</span>' +
+      '<span>' + line(tok('--baseline')) + ' causal dependency</span>'
+    : '<span>' + sw(tok('--series-3')) + ' initial condition</span>' +
+      '<span>' + sw(tok('--ramp-1')) + sw(tok('--ramp-4')) + ' event (early → late layer)</span>' +
+      '<span>' + line(tok('--baseline')) + ' token-causal edge</span>' +
+      '<span>' + sw(tok('--series-5'), true) + ' branchial event pair</span>';
+}
+
+/* ---------- evolution scrubber (feature A) ---------- */
+const playBtn = document.getElementById('playBtn'), scrub = document.getElementById('scrub'), stepLabel = document.getElementById('stepLabel');
+let playing = false, lastAdv = 0;
+function setStep(v) {
+  currentStep = Math.max(0, Math.min(maxStep, v));
+  scrub.value = currentStep;
+  stepLabel.textContent = currentStep + '/' + maxStep;
+  updateHash(); requestDraw();
+}
+function playFrame(ts) {
+  if (!playing) return;
+  if (!lastAdv) lastAdv = ts;
+  if (ts - lastAdv >= 700) { // rAF timestamps, not wall-clock polling
+    lastAdv = ts;
+    setStep(currentStep + 1);
+    if (currentStep >= maxStep) { stopPlay(); return; }
+  }
+  requestAnimationFrame(playFrame);
+}
+function startPlay() {
+  if (maxStep === 0) return;
+  if (currentStep >= maxStep) setStep(0);
+  playing = true; lastAdv = 0;
+  playBtn.innerHTML = '&#10074;&#10074;'; playBtn.setAttribute('aria-label', 'pause evolution');
+  requestAnimationFrame(playFrame);
+}
+function stopPlay() {
+  playing = false;
+  playBtn.innerHTML = '&#9654;'; playBtn.setAttribute('aria-label', 'play evolution');
+}
+playBtn.addEventListener('click', () => playing ? stopPlay() : startPlay());
+scrub.addEventListener('input', () => { stopPlay(); setStep(+scrub.value); });
+
+/* ---------- manual theme toggle (feature B) ---------- */
+const themeBtn = document.getElementById('themeBtn');
+let themeMode = 'auto'; // auto -> light -> dark -> auto
+function applyTheme() {
+  if (themeMode === 'auto') document.body.removeAttribute('data-theme');
+  else document.body.setAttribute('data-theme', themeMode);
+  themeBtn.textContent = 'theme: ' + themeMode;
+  themeBtn.setAttribute('aria-label', 'theme: ' + themeMode);
+  legend(); requestDraw();
+  if (selected !== null) inspect(selected);
+}
+themeBtn.addEventListener('click', () => {
+  themeMode = themeMode === 'auto' ? 'light' : themeMode === 'light' ? 'dark' : 'auto';
+  applyTheme();
+});
+
+/* ---------- PNG export (feature D) ---------- */
+document.getElementById('exportBtn').addEventListener('click', () => {
+  draw(); // ensure the backing store is current
+  const out = document.createElement('canvas');
+  out.width = cv.width; out.height = cv.height;
+  const g = out.getContext('2d');
+  g.fillStyle = tok('--page'); g.fillRect(0, 0, out.width, out.height);
+  g.drawImage(cv, 0, 0);
+  out.toBlob(b => {
+    if (!b) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = 'multiway.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+});
+
+/* ---------- permalink (feature E): #mode/selected/step ---------- */
+const bootHash = location.hash; // captured before any updateHash can clobber it
+let restoring = false;
+function updateHash() {
+  if (restoring) return;
+  const h = '#' + mode + '/' + (selected === null ? '-' : selected) + '/' + currentStep;
+  if (location.hash !== h) history.replaceState(null, '', h);
+}
+function restoreHash() {
+  const m = bootHash.match(/^#(mw|ca|te)\/(\d+|-)\/(\d+)$/);
+  if (!m) return false;
+  restoring = true;
+  if (m[1] === 'ca' && DATA.causal) setMode('ca');
+  else if (m[1] === 'te' && hasTeg) setMode('te');
+  else setMode('mw');
+  if (m[2] !== '-' && MW.states[+m[2]]) { selected = +m[2]; inspect(selected); }
+  setStep(+m[3]);
+  restoring = false;
+  updateHash();
+  return true;
+}
+
+/* ---------- keyboard navigation (feature C) ---------- */
+function walkSelection(dir) {
+  if (mode !== 'mw') return;
+  if (selected === null) { selected = MW.layers[0][0]; }
+  else if (dir === 'left' || dir === 'right') {
+    const layer = MW.layers[MW.states[selected].step].slice()
+      .sort((a, b) => mwPos.get(a).y - mwPos.get(b).y); // visual order
+    const j = layer.indexOf(selected) + (dir === 'right' ? 1 : -1);
+    if (j < 0 || j >= layer.length) return;
+    selected = layer[j];
+  } else if (dir === 'up') {
+    const e = MW.events.find(e => e.to === selected);
+    if (!e) return;
+    selected = e.from;
+  } else {
+    const e = MW.events.find(e => e.from === selected);
+    if (!e) return;
+    selected = e.to;
+  }
+  inspect(selected); updateHash(); requestDraw();
+}
+window.addEventListener('keydown', e => {
+  if (!DATA) return;
+  const t = e.target, tag = t && t.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === 'c' || k === 'C') { // cycle tabs
+    const ms = availableModes();
+    setMode(ms[(ms.indexOf(mode) + 1) % ms.length]);
+  } else if (k === 'ArrowLeft') { e.preventDefault(); walkSelection('left'); }
+  else if (k === 'ArrowRight') { e.preventDefault(); walkSelection('right'); }
+  else if (k === 'ArrowUp') { e.preventDefault(); walkSelection('up'); }
+  else if (k === 'ArrowDown') { e.preventDefault(); walkSelection('down'); }
+  else if (k === 'r' || k === 'R') { view.k = 1; view.tx = 0; view.ty = 0; requestDraw(); }
+  else if (k === '+' || k === '=') { const r = cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.25); }
+  else if (k === '-' || k === '_') { const r = cv.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.8); }
+  else if (k === 'p' || k === 'P') { if (mode === 'mw') playing ? stopPlay() : startPlay(); }
+});
+
+/* ---------- inspector: force-layout the selected state's hypergraph ---------- */
+function inspect(id) {
+  const s = MW.states[id];
+  document.getElementById('meta').innerHTML =
+    'state <b>' + id + '</b> · step <b>' + s.step + '</b> · <b>' + s.edges.length + '</b> edges' +
+    (merged ? '' : ' · absorbs <b>' + fmt(s.paths) + '</b> tree paths');
+  document.getElementById('edgeDump').textContent =
+    '{' + s.edges.map(e => '{' + e.join(',') + '}').join(', ') + '}';
+
+  const verts = [...new Set(s.edges.flat())];
+  const vi = new Map(verts.map((v, i) => [v, i]));
+  const N = verts.length;
+  const icv = document.getElementById('inspector');
+  icv.setAttribute('aria-label', 'hypergraph of state ' + id + ': ' + N + ' vertices, ' + s.edges.length + ' edges');
+  const dpr = window.devicePixelRatio || 1;
+  const W = icv.clientWidth || 310, H = 300;
+  icv.width = W * dpr; icv.height = H * dpr;
+  const g = icv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // springs from consecutive pairs in every hyperedge
+  const springs = [], pairCount = new Map();
+  s.edges.forEach(e => {
+    for (let i = 0; i + 1 < e.length; i++) {
+      const a = vi.get(e[i]), b = vi.get(e[i + 1]);
+      if (a === b) continue;
+      const key = Math.min(a, b) + ':' + Math.max(a, b);
+      const c = (pairCount.get(key) || 0) + 1; pairCount.set(key, c);
+      springs.push({ a, b, n: c });
+    }
+  });
+  // deterministic initial ring (no randomness -> reproducible screenshots)
+  const px = new Array(N), py = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const ang = 2 * Math.PI * i / Math.max(1, N) + 0.7;
+    px[i] = W / 2 + (W / 3.1) * Math.cos(ang) * (0.75 + 0.25 * ((i * 7919) % 97) / 97);
+    py[i] = H / 2 + (H / 3.1) * Math.sin(ang) * (0.75 + 0.25 * ((i * 104729) % 89) / 89);
+  }
+  const REP = 1600, SPR = 0.06, REST = Math.max(34, 150 / Math.sqrt(Math.max(1, N)));
+  for (let it = 0; it < 300; it++) {
+    const fx = new Array(N).fill(0), fy = new Array(N).fill(0);
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      let dx = px[i] - px[j], dy = py[i] - py[j];
+      let d2 = dx * dx + dy * dy + 0.01, d = Math.sqrt(d2);
+      const f = REP / d2;
+      fx[i] += f * dx / d; fy[i] += f * dy / d; fx[j] -= f * dx / d; fy[j] -= f * dy / d;
+    }
+    springs.forEach(sp => {
+      let dx = px[sp.b] - px[sp.a], dy = py[sp.b] - py[sp.a];
+      const d = Math.sqrt(dx * dx + dy * dy) + 0.01, f = SPR * (d - REST);
+      fx[sp.a] += f * dx / d; fy[sp.a] += f * dy / d; fx[sp.b] -= f * dx / d; fy[sp.b] -= f * dy / d;
+    });
+    const cool = 1 - it / 320;
+    for (let i = 0; i < N; i++) {
+      fx[i] += (W / 2 - px[i]) * 0.012; fy[i] += (H / 2 - py[i]) * 0.012;
+      px[i] += Math.max(-9, Math.min(9, fx[i] * cool));
+      py[i] += Math.max(-9, Math.min(9, fy[i] * cool));
+      px[i] = Math.max(14, Math.min(W - 14, px[i]));
+      py[i] = Math.max(14, Math.min(H - 14, py[i]));
+    }
+  }
+
+  // draw
+  g.fillStyle = tok('--surface-1'); g.fillRect(0, 0, W, H);
+  const drawn = new Map();
+  const arrow = (x1, y1, x2, y2, curve) => {
+    const mx = (x1 + x2) / 2 - curve * (y2 - y1) * 0.35;
+    const my = (y1 + y2) / 2 + curve * (x2 - x1) * 0.35;
+    g.beginPath(); g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2); g.stroke();
+    const ang = Math.atan2(y2 - my, x2 - mx);
+    const bx = x2 - 6 * Math.cos(ang), by = y2 - 6 * Math.sin(ang);
+    g.beginPath(); g.moveTo(x2, y2);
+    g.lineTo(bx + 4 * Math.sin(ang), by - 4 * Math.cos(ang));
+    g.lineTo(bx - 4 * Math.sin(ang), by + 4 * Math.cos(ang));
+    g.closePath(); g.fill();
+  };
+  g.strokeStyle = tok('--ink-muted'); g.fillStyle = tok('--ink-muted'); g.lineWidth = 1.4; g.globalAlpha = 0.85;
+  s.edges.forEach(e => {
+    for (let i = 0; i + 1 < e.length; i++) {
+      const a = vi.get(e[i]), b = vi.get(e[i + 1]);
+      if (a === b) { // self-loop
+        const n = (drawn.get('L' + a) || 0) + 1; drawn.set('L' + a, n);
+        const r = 7 + 4 * n;
+        g.beginPath(); g.arc(px[a] + r * 0.8, py[a] - r * 0.8, r, 0, 7); g.stroke();
+      } else {
+        const key = Math.min(a, b) + ':' + Math.max(a, b);
+        const n = (drawn.get(key) || 0) + 1; drawn.set(key, n);
+        const curve = (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.8;
+        const dx = px[b] - px[a], dy = py[b] - py[a], d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+        arrow(px[a] + 6 * dx / d, py[a] + 6 * dy / d, px[b] - 8 * dx / d, py[b] - 8 * dy / d, curve);
+      }
+    }
+  });
+  g.globalAlpha = 1;
+  for (let i = 0; i < N; i++) {
+    g.fillStyle = tok('--series-1');
+    g.beginPath(); g.arc(px[i], py[i], 4.5, 0, 7); g.fill();
+  }
+  if (N <= 42) {
+    g.fillStyle = tok('--ink-2'); g.font = '10px system-ui, sans-serif'; g.textAlign = 'center';
+    for (let i = 0; i < N; i++) g.fillText(String(verts[i]), px[i], py[i] - 8);
+  }
+}
+
+/* ---------- boot ---------- */
+function boot() { computeLayouts(); legend(); requestDraw(); }
+
+/* Load (or re-load) a data bundle: reset selection, view, scrubber,
+   tab availability, then re-render everything. The playground calls
+   this once per Run; --html pages call it once at boot. */
+function loadData(data) {
+  DATA = data;
+  MW = DATA.multiway;
+  TEG = DATA.teg;
+  hasTeg = !!(TEG && ((TEG.causal && TEG.causal.length) || (TEG.branchialEvents && TEG.branchialEvents.length)));
+  merged = MW.backMerges > 0; // walk counts are meaningless in a merged DAG
+  maxStep = MW.layers.length - 1;
+  selected = null; hover = null;
+  view.k = 1; view.tx = 0; view.ty = 0;
+  stopPlay();
+  scrub.max = maxStep; scrub.value = maxStep;
+  renderHeader();
+  applyTabAvailability();
+  setMode('mw');
+  boot();
+  setStep(maxStep);
+  cv.setAttribute('aria-label', canvasLabel());
+  if (!restoreHash()) {
+    // pre-select a mid-depth state so the inspector isn't empty on load
+    const mid = MW.layers[Math.min(2, maxStep)];
+    if (mid && mid.length) { selected = mid[0]; inspect(selected); updateHash(); requestDraw(); }
+  }
+}
+let resizeTimer = 0;
+window.addEventListener('resize', () => { // debounced: re-layout AND refresh the inspector
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (!DATA) return;
+    boot();
+    if (selected !== null) inspect(selected);
+  }, 150);
+});
+if (window.matchMedia) { // OS scheme changes restyle in auto mode; harmless when forced
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    legend(); requestDraw();
+    if (selected !== null) inspect(selected);
+  });
+}
+/* ---------- playground (wasm baked by --playground; empty in --html) ---------- */
+const WASM_B64 = "";
+(function playground() {
+  if (!WASM_B64) return; // --html page: panel stays hidden
+  const panel = document.getElementById('playPanel');
+  panel.hidden = false;
+  const runBtn = document.getElementById('pgRun'), copyBtn = document.getElementById('pgCopy');
+  const errEl = document.getElementById('pgErr');
+  let wasmBytes = null, inst = null, lastJson = null;
+
+  function decodeB64(s) {
+    const bin = atob(s), a = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+  async function ensureInstance() {
+    if (inst) return inst;
+    if (!wasmBytes) wasmBytes = decodeB64(WASM_B64); // decoded once, cached
+    const mod = await WebAssembly.instantiate(wasmBytes.buffer.slice(0));
+    inst = mod.instance;
+    return inst;
+  }
+  function writeString(ex, s) {
+    const bytes = new TextEncoder().encode(s);
+    const ptr = ex.mw_alloc(bytes.length);
+    new Uint8Array(ex.memory.buffer, ptr, bytes.length).set(bytes);
+    return { ptr, len: bytes.length };
+  }
+  async function run() {
+    errEl.textContent = '';
+    runBtn.disabled = true; runBtn.textContent = 'running…';
+    // yield a frame so the disabled state paints before the engine hogs the thread
+    await new Promise(r => requestAnimationFrame(() => r()));
+    try {
+      const ex = (await ensureInstance()).exports;
+      const rule = writeString(ex, document.getElementById('pgRule').value);
+      const init = writeString(ex, document.getElementById('pgInit').value);
+      const steps = Math.max(0, Math.min(8, +document.getElementById('pgSteps').value || 0));
+      const causal = Math.max(0, Math.min(500, +document.getElementById('pgCausal').value || 0));
+      const std = document.getElementById('pgOrder').value === 'standard' ? 1 : 0;
+      const out = ex.mw_run(rule.ptr, rule.len, init.ptr, init.len, steps, causal, std);
+      const view = new DataView(ex.memory.buffer);
+      const n = view.getUint32(out, true);
+      const json = new TextDecoder().decode(new Uint8Array(ex.memory.buffer, out + 4, n));
+      ex.mw_dealloc(out, 4 + n);
+      const data = JSON.parse(json);
+      if (data.error) { errEl.textContent = data.error; return; }
+      lastJson = json;
+      loadData(data);
+    } catch (e) {
+      // a trap is an engine bug: report it and re-instantiate from the
+      // cached bytes so the next Run starts from clean memory
+      errEl.textContent = 'engine trap (this is a bug — please report the inputs): ' + e;
+      inst = null;
+    } finally {
+      runBtn.disabled = false; runBtn.textContent = 'Run';
+    }
+  }
+  runBtn.addEventListener('click', run);
+  copyBtn.addEventListener('click', () => {
+    if (!lastJson) { errEl.textContent = 'run something first'; return; }
+    navigator.clipboard.writeText(lastJson).then(
+      () => { errEl.textContent = ''; copyBtn.textContent = 'copied!';
+              setTimeout(() => { copyBtn.textContent = 'copy bundle JSON'; }, 1200); },
+      () => { errEl.textContent = 'clipboard unavailable'; });
+  });
+})();
+
+if (BOOT_DATA) loadData(BOOT_DATA);
+</script>
+</body>
+</html>
