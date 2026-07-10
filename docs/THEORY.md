@@ -155,10 +155,14 @@ The verdict vocabulary is deliberately narrow:
   confluent": the critical-pair lemma for this exact formalism (multiset
   ordered hyperedges, non-injective binding) — i.e. that every
   overlapping divergence in every host factors through an enumerated
-  pair with strong joinability transferring — is a proof note this
-  project still owes (see the roadmap issue). What *is* mechanically
-  fuzzed: for the rule the checker certifies, random overlapping
-  divergences on random hosts reconverge.
+  pair with strong joinability transferring — is worked through in
+  [docs/LEMMA.md](LEMMA.md): two of the three steps are proved (the
+  quotient lemma's mechanical half is fuzz-pinned by
+  `prop_quotient_preserves_matches`), and the factorization step's
+  remaining gap is listed explicitly there. Until it closes, this
+  verdict stays "evidence". What *is* mechanically fuzzed: for the rule
+  the checker certifies, random overlapping divergences on random hosts
+  reconverge.
 - `confluent: true` additionally requires every rule to strictly
   decrease edge count — a well-founded measure, so rewriting terminates
   and Newman's lemma lifts local to global confluence.

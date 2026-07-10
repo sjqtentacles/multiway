@@ -93,6 +93,53 @@ fn prop_branchial_exact() {
     });
 }
 
+/// The quotient lemma's mechanical half (docs/LEMMA.md, Lemma Q):
+/// vertex identification never destroys a match. For a random host H,
+/// a random surjective vertex map q, and every match m of H: the same
+/// edge indices with binding q∘σ form a match of q(H). This is the
+/// step that lets host divergences factor through the enumerated
+/// critical pairs (whose hosts are the FINEST unifications).
+#[test]
+fn prop_quotient_preserves_matches() {
+    use multiway::matcher::find_matches;
+    prop(SEED ^ 8, "prop_quotient_preserves_matches", |rng, _| {
+        let rule = parse_rule(&gen_rule_text(rng, &RuleCfg::default())).unwrap();
+        let host = gen_state(rng, &small_init());
+        let verts = host.vertices();
+        if verts.is_empty() {
+            return;
+        }
+        // random vertex quotient: each vertex maps to a (possibly
+        // shared) representative from a smaller pool
+        let pool = 1 + (rng.next_u64() as usize) % verts.len();
+        let q: std::collections::BTreeMap<u32, u32> = verts
+            .iter()
+            .map(|&v| (v, verts[(rng.next_u64() as usize) % pool]))
+            .collect();
+        let q_host = multiway::hypergraph::State::new(
+            host.edges
+                .iter()
+                .map(|e| e.iter().map(|v| q[v]).collect())
+                .collect(),
+        );
+        let host_matches = find_matches(&host, &rule);
+        let quot_matches = find_matches(&q_host, &rule);
+        for m in &host_matches {
+            let image_binding: Vec<Option<u32>> =
+                m.binding.iter().map(|b| b.map(|v| q[&v])).collect();
+            assert!(
+                quot_matches
+                    .iter()
+                    .any(|qm| qm.edge_idx == m.edge_idx && qm.binding == image_binding),
+                "match {:?}/{:?} of the host has no image in the quotient (rule {})",
+                m.edge_idx,
+                m.binding,
+                rule.text
+            );
+        }
+    });
+}
+
 /// Back-merge fixture: reversal on a 2-chain merges into EARLIER
 /// layers; the derived branchial must still match the independent
 /// oracle exactly (random_system doesn't guarantee back-merge coverage
