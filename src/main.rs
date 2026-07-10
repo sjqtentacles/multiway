@@ -63,6 +63,13 @@ SCAN MODE (rule-space pattern discovery):
   --atlas DIR        write DIR/index.html + a baked viewer per rule
   --scan-json PATH   write the full scan result as JSON
 
+PLAYGROUND BAKE (build step for the in-browser engine page):
+  --playground OUT   write a self-contained playground page (the viewer
+                     with the engine inlined as WebAssembly)
+  --wasm PATH        the .wasm to inline, built with:
+                     cargo rustc --lib --profile wasm \
+                       --target wasm32-unknown-unknown --crate-type cdylib
+
 EXAMPLES:
   multiway --rule "{{x,y}}->{{x,y},{y,z}}" --init "{{0,0}}" --steps 6 --html demo.html
   multiway --rule "{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}" --init "{{0,0},{0,0}}" \
@@ -102,6 +109,8 @@ fn main() {
     let mut atlas_dir: Option<String> = None;
     let mut scan_json_path: Option<String> = None;
     let mut steps_set = false;
+    let mut playground_out: Option<String> = None;
+    let mut wasm_path: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -197,6 +206,14 @@ fn main() {
                 mode_scan = true;
                 i += 1;
             }
+            "--playground" => {
+                playground_out = Some(need(i));
+                i += 2;
+            }
+            "--wasm" => {
+                wasm_path = Some(need(i));
+                i += 2;
+            }
             "--count" => {
                 count_only = true;
                 i += 1;
@@ -275,6 +292,32 @@ fn main() {
         }
     }
 
+    // playground mode: bake the wasm engine into the dual-mode template
+    if let Some(out_path) = playground_out {
+        let wasm_path = wasm_path.unwrap_or_else(|| {
+            eprintln!(
+                "--playground needs --wasm PATH (the built .wasm)\n\n{}",
+                USAGE
+            );
+            exit(2);
+        });
+        let bytes = std::fs::read(&wasm_path).unwrap_or_else(|e| {
+            eprintln!("cannot read {}: {}", wasm_path, e);
+            exit(2);
+        });
+        let page = TEMPLATE
+            .replace("__DATA_JSON__", "null")
+            .replace("__WASM_B64__", &base64(&bytes));
+        std::fs::write(&out_path, page).unwrap_or_else(|e| {
+            eprintln!("cannot write {}: {}", out_path, e);
+            exit(1);
+        });
+        if !quiet {
+            println!("wrote {} ({} wasm bytes inlined)", out_path, bytes.len());
+        }
+        return;
+    }
+
     if mode_scan {
         if steps_set {
             probe_budget.steps = steps;
@@ -338,7 +381,9 @@ fn main() {
                     },
                 );
                 let bundle = bundle_json(&rule.text, &init.to_notation(), &mw, None);
-                let page = TEMPLATE.replace("__DATA_JSON__", &bundle);
+                let page = TEMPLATE
+                    .replace("__DATA_JSON__", &bundle)
+                    .replace("__WASM_B64__", "");
                 let name = format!("rule-{:03}.html", i + 1);
                 std::fs::write(dir.join(&name), page).unwrap_or_else(|err| {
                     eprintln!("cannot write {}: {}", name, err);
@@ -450,7 +495,9 @@ fn main() {
         }
     }
     if let Some(p) = html_path {
-        let html = TEMPLATE.replace("__DATA_JSON__", &json);
+        let html = TEMPLATE
+            .replace("__DATA_JSON__", &json)
+            .replace("__WASM_B64__", "");
         std::fs::write(&p, html).unwrap_or_else(|e| {
             eprintln!("cannot write {}: {}", p, e);
             exit(1);
@@ -459,4 +506,32 @@ fn main() {
             println!("wrote {}", p);
         }
     }
+}
+
+/// Standard base64 (RFC 4648, with padding) — hand-rolled so the bake
+/// stays zero-dep. Pinned by tests/playground.rs's RFC vectors.
+fn base64(bytes: &[u8]) -> String {
+    const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4); // div_ceil needs 1.73; MSRV is 1.63
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(TBL[(n >> 18) as usize & 63] as char);
+        out.push(TBL[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TBL[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TBL[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }

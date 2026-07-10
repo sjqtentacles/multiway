@@ -139,6 +139,20 @@
     }
     header .rule { max-width: 100%; }
   }
+#playPanel { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center;
+  padding: .5rem .9rem; border-bottom: 1px solid var(--baseline);
+  font-size: .82rem; }
+#playPanel[hidden] { display: none; }
+#playPanel label { display: inline-flex; align-items: center; gap: .3rem; color: var(--ink-2); }
+#playPanel input[type=text] { width: 22rem; max-width: 44vw; font-family: var(--mono, monospace); }
+#playPanel input[type=number] { width: 4rem; }
+#playPanel input, #playPanel select, #playPanel button {
+  background: var(--surface-1); color: var(--ink-1);
+  border: 1px solid var(--baseline); border-radius: 4px; padding: .2rem .45rem; }
+#playPanel button { cursor: pointer; }
+#playPanel button:disabled { opacity: .5; cursor: wait; }
+#pgErr { color: var(--series-4, #c03040); font-weight: 600; }
+.pg-hint { color: var(--ink-muted); }
 </style>
 </head>
 <body class="viz-root">
@@ -147,6 +161,22 @@
   <span class="rule" id="ruleText" title=""></span>
   <div class="stats" id="stats" aria-live="polite"></div>
 </header>
+<section id="playPanel" hidden aria-label="playground controls">
+  <label>rule <input id="pgRule" type="text" spellcheck="false"
+    value="{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}"></label>
+  <label>init <input id="pgInit" type="text" spellcheck="false" value="{{0,0},{0,0}}"></label>
+  <label>steps <input id="pgSteps" type="number" min="0" max="8" value="4"
+    title="capped at 8: the classic rule already reaches ~400k states at depth 7"></label>
+  <label>causal <input id="pgCausal" type="number" min="0" max="500" value="12"></label>
+  <label>order <select id="pgOrder">
+    <option value="sequential" selected>sequential</option>
+    <option value="standard">standard</option>
+  </select></label>
+  <button id="pgRun">Run</button>
+  <button id="pgCopy" title="copy the exact bundle JSON — byte-identical to the native CLI's --json">copy bundle JSON</button>
+  <span id="pgErr" role="alert"></span>
+  <span class="pg-hint">runs entirely in your browser (WebAssembly) — deep steps can take a while; the page may freeze during a run</span>
+</section>
 <nav role="tablist" aria-label="graph views">
   <button id="tabMw" role="tab" aria-selected="true" aria-controls="stage">Multiway graph</button>
   <button id="tabCa" role="tab" aria-selected="false" aria-controls="stage">Causal graph</button>
@@ -895,6 +925,74 @@ if (window.matchMedia) { // OS scheme changes restyle in auto mode; harmless whe
     if (selected !== null) inspect(selected);
   });
 }
+/* ---------- playground (wasm baked by --playground; empty in --html) ---------- */
+const WASM_B64 = "__WASM_B64__";
+(function playground() {
+  if (!WASM_B64) return; // --html page: panel stays hidden
+  const panel = document.getElementById('playPanel');
+  panel.hidden = false;
+  const runBtn = document.getElementById('pgRun'), copyBtn = document.getElementById('pgCopy');
+  const errEl = document.getElementById('pgErr');
+  let wasmBytes = null, inst = null, lastJson = null;
+
+  function decodeB64(s) {
+    const bin = atob(s), a = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+  async function ensureInstance() {
+    if (inst) return inst;
+    if (!wasmBytes) wasmBytes = decodeB64(WASM_B64); // decoded once, cached
+    const mod = await WebAssembly.instantiate(wasmBytes.buffer.slice(0));
+    inst = mod.instance;
+    return inst;
+  }
+  function writeString(ex, s) {
+    const bytes = new TextEncoder().encode(s);
+    const ptr = ex.mw_alloc(bytes.length);
+    new Uint8Array(ex.memory.buffer, ptr, bytes.length).set(bytes);
+    return { ptr, len: bytes.length };
+  }
+  async function run() {
+    errEl.textContent = '';
+    runBtn.disabled = true; runBtn.textContent = 'running…';
+    // yield a frame so the disabled state paints before the engine hogs the thread
+    await new Promise(r => requestAnimationFrame(() => r()));
+    try {
+      const ex = (await ensureInstance()).exports;
+      const rule = writeString(ex, document.getElementById('pgRule').value);
+      const init = writeString(ex, document.getElementById('pgInit').value);
+      const steps = Math.max(0, Math.min(8, +document.getElementById('pgSteps').value || 0));
+      const causal = Math.max(0, Math.min(500, +document.getElementById('pgCausal').value || 0));
+      const std = document.getElementById('pgOrder').value === 'standard' ? 1 : 0;
+      const out = ex.mw_run(rule.ptr, rule.len, init.ptr, init.len, steps, causal, std);
+      const view = new DataView(ex.memory.buffer);
+      const n = view.getUint32(out, true);
+      const json = new TextDecoder().decode(new Uint8Array(ex.memory.buffer, out + 4, n));
+      ex.mw_dealloc(out, 4 + n);
+      const data = JSON.parse(json);
+      if (data.error) { errEl.textContent = data.error; return; }
+      lastJson = json;
+      loadData(data);
+    } catch (e) {
+      // a trap is an engine bug: report it and re-instantiate from the
+      // cached bytes so the next Run starts from clean memory
+      errEl.textContent = 'engine trap (this is a bug — please report the inputs): ' + e;
+      inst = null;
+    } finally {
+      runBtn.disabled = false; runBtn.textContent = 'Run';
+    }
+  }
+  runBtn.addEventListener('click', run);
+  copyBtn.addEventListener('click', () => {
+    if (!lastJson) { errEl.textContent = 'run something first'; return; }
+    navigator.clipboard.writeText(lastJson).then(
+      () => { errEl.textContent = ''; copyBtn.textContent = 'copied!';
+              setTimeout(() => { copyBtn.textContent = 'copy bundle JSON'; }, 1200); },
+      () => { errEl.textContent = 'clipboard unavailable'; });
+  });
+})();
+
 if (BOOT_DATA) loadData(BOOT_DATA);
 </script>
 </body>

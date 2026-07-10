@@ -73,11 +73,7 @@ fn run_json_error_paths() {
         "quote must arrive escaped: {}",
         quoted
     );
-    assert!(
-        quoted.ends_with("\"}"),
-        "error JSON must close: {}",
-        quoted
-    );
+    assert!(quoted.ends_with("\"}"), "error JSON must close: {}", quoted);
 }
 
 /// The order flag's WIRING pin: run_json under each flag value must
