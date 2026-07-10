@@ -1,6 +1,9 @@
-# Zero third-party actions except actions/checkout (pinned by SHA), no
-# caching (zero dependencies: a cold build is ~4k lines — the cache would
-# cost more than it saves), toolchains via the runner's preinstalled rustup.
+# Zero third-party actions except actions/checkout and the GitHub-owned
+# actions/upload-artifact (both pinned by SHA), no caching (zero
+# dependencies: a cold build is small — the cache would cost more than
+# it saves), toolchains via the runner's preinstalled rustup; the wasm
+# job also uses the runner's preinstalled node (same policy class as
+# preinstalled rustup — see CONTRIBUTING's zero-dependency note).
 name: ci
 
 on:
@@ -89,3 +92,55 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: depth-5 baseline + perf smoke (100x margin)
         run: cargo test --release -- --ignored
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: rustup target add wasm32-unknown-unknown
+      - run: rustup component add clippy
+      - name: wasm-target clippy (keeps the cfg-gated shim clean)
+        run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
+      - name: build the engine as wasm
+        run: cargo rustc --lib --profile wasm --target wasm32-unknown-unknown --crate-type cdylib
+      - name: size budget (abort criterion from the design: ~300 KB)
+        run: |
+          W=target/wasm32-unknown-unknown/wasm/multiway.wasm
+          SIZE=$(stat -c%s "$W")
+          echo "wasm size: $SIZE bytes"
+          test "$SIZE" -lt 300000
+      - name: native vs wasm byte-identity (the determinism brag, across architectures)
+        run: |
+          cargo build --release
+          target/release/multiway \
+            --rule '{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}' \
+            --init '{{0,0},{0,0}}' --steps 4 --causal 12 \
+            --quiet --json native.json
+          node -e '
+            const fs = require("fs");
+            (async () => {
+              const bytes = fs.readFileSync("target/wasm32-unknown-unknown/wasm/multiway.wasm");
+              const { instance } = await WebAssembly.instantiate(bytes);
+              const ex = instance.exports;
+              const put = (s) => {
+                const b = new TextEncoder().encode(s);
+                const p = ex.mw_alloc(b.length);
+                new Uint8Array(ex.memory.buffer, p, b.length).set(b);
+                return [p, b.length];
+              };
+              const [rp, rl] = put("{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}");
+              const [ip, il] = put("{{0,0},{0,0}}");
+              const out = ex.mw_run(rp, rl, ip, il, 4, 12, 0);
+              const n = new DataView(ex.memory.buffer).getUint32(out, true);
+              const json = Buffer.from(ex.memory.buffer, out + 4, n).toString("utf8");
+              fs.writeFileSync("wasm.json", json);
+            })().catch((e) => { console.error(e); process.exit(1); });
+          '
+          cmp native.json wasm.json
+          echo "native and wasm bundles are byte-identical"
+      - name: bake the playground page
+        run: cargo run --release -- --playground playground.html --wasm target/wasm32-unknown-unknown/wasm/multiway.wasm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playground
+          path: playground.html

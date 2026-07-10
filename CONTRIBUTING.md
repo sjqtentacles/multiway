@@ -19,6 +19,13 @@ locally with `cargo +1.63 test --all-targets`.
    criterion, no rand. Hand-roll it or don't ship it. The test PRNG,
    property harness, oracles, JSON checker, and bench harness are all
    in-tree; extend those.
+   *Policy interpretation:* "zero dependencies" means **crates and
+   third-party CI actions**. Tools preinstalled on the GitHub runners
+   (rustup, node) are in-bounds — the wasm job's ~30-line inline
+   `node -e` byte-identity check is the same policy class as building
+   with the preinstalled rustup. GitHub-owned actions pinned by SHA
+   (checkout, upload-artifact) are likewise in-bounds; anything from a
+   third-party org is not.
 2. **Determinism.** Identical inputs must produce byte-identical `--json`
    output. No wall clock in outputs, no global RNG, and no `HashMap`
    iteration order reaching output — any map whose iteration order can
