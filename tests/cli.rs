@@ -124,3 +124,32 @@ fn cli_threads_flag_byte_identical() {
     };
     assert_eq!(render("1"), render("4"));
 }
+
+/// A1: profiling output must NEVER reach stdout (stdout is golden-
+/// compared; MULTIWAY_PROFILE writes to stderr only).
+#[test]
+fn prop_profile_env_never_reaches_stdout() {
+    let args = [
+        "--rule",
+        "{{x,y},{x,z}}->{{x,z},{x,w},{y,w},{z,w}}",
+        "--init",
+        "{{0,0},{0,0}}",
+        "--steps",
+        "3",
+    ];
+    let plain = bin().args(args).output().unwrap();
+    let profiled = bin()
+        .args(args)
+        .env("MULTIWAY_PROFILE", "1")
+        .output()
+        .unwrap();
+    assert!(plain.status.success() && profiled.status.success());
+    assert_eq!(
+        plain.stdout, profiled.stdout,
+        "MULTIWAY_PROFILE leaked into stdout"
+    );
+    assert!(
+        String::from_utf8_lossy(&profiled.stderr).contains("PROFILE"),
+        "profiling requested but nothing on stderr"
+    );
+}

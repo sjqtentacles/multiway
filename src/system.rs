@@ -12,6 +12,39 @@ use crate::hypergraph::{Edge, State};
 use crate::matcher::{apply_full, delta_matches, find_matches, Application, Match};
 use crate::rule::Rule;
 
+/// Monotonic profiling timer. wasm32-unknown-unknown has no runtime
+/// clock — `Instant::now()` COMPILES there but traps at runtime — so the
+/// wasm variant is a zero-cost stub returning 0 and the lib stays
+/// wasm-clean. Timing values feed only [`EvolveStats`], which is never
+/// serialized into any export (goldens cannot move).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct ProfTimer(std::time::Instant);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ProfTimer {
+    fn start() -> Self {
+        ProfTimer(std::time::Instant::now())
+    }
+    fn elapsed_ns(self) -> u128 {
+        self.0.elapsed().as_nanos()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+struct ProfTimer;
+
+#[cfg(target_arch = "wasm32")]
+impl ProfTimer {
+    fn start() -> Self {
+        ProfTimer
+    }
+    fn elapsed_ns(self) -> u128 {
+        0
+    }
+}
+
 /// One canonical state of the multiway system.
 pub struct StateRec {
     /// Dense id (index into `MultiwaySystem::states`).
@@ -85,6 +118,16 @@ pub struct EvolveStats {
     /// Maximum worker threads spawned in any step (0 on the serial path)
     /// — distinguishes "parallel implemented" from "threads ignored".
     pub workers_spawned: usize,
+    /// Wall-clock attribution (diagnostics only — NEVER exported; zero on
+    /// wasm where no runtime clock exists): Phase A fan-out
+    /// (apply + canonicalize).
+    pub phase_a_ns: u128,
+    /// Phase B serial bookkeeping (dedup, ids, tokens, branchial).
+    pub phase_b_ns: u128,
+    /// Phase C fan-out (match maintenance for the new layer).
+    pub phase_c_ns: u128,
+    /// Serial teardown of the per-step expansion buffers.
+    pub drop_ns: u128,
 }
 
 /// Evolution options. `threads > 1` parallelizes the pure per-child work
@@ -144,6 +187,14 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
 /// - **Phase C** fans out `delta_matches` for the new layer the same way.
 pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySystem {
     assert!(opts.threads >= 1, "threads must be >= 1");
+    // Tier-2 profiling: fine Phase B attribution, opt-in via env, printed
+    // to STDERR only (stdout is golden-compared). env::var returns Err on
+    // wasm — safe everywhere.
+    let profile = std::env::var("MULTIWAY_PROFILE").is_ok();
+    let mut prof_lookup_ns: u128 = 0;
+    let mut prof_clone_ns: u128 = 0;
+    let mut prof_tokens_ns: u128 = 0;
+    let mut prof_branchial_ns: u128 = 0;
     let steps = opts.steps;
     let mut mw = MultiwaySystem {
         states: Vec::new(),
@@ -176,10 +227,13 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         let mut branch_pairs: Vec<(usize, usize)> = Vec::new();
 
         // Phase A: pure per-match work, optionally parallel.
+        let t = ProfTimer::start();
         let mut expanded: Vec<Vec<(Application, Option<Canon>)>> =
             phase_a(rule, &mw.states, &frontier, opts.threads, &mut mw.stats);
+        mw.stats.phase_a_ns += t.elapsed_ns();
 
         // Phase B: serial bookkeeping in (frontier, match) order.
+        let t = ProfTimer::start();
         // Pending delta computations for Phase C: (cid, fi, mi).
         let mut pending: Vec<(usize, usize, usize)> = Vec::new();
         for (fi, (sid, matches)) in frontier.iter().enumerate() {
@@ -189,6 +243,11 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
             for (mi, m) in matches.iter().enumerate() {
                 let app = &expanded[fi][mi].0;
                 let c = expanded[fi][mi].1.as_ref().unwrap();
+                let bt = if profile {
+                    Some(ProfTimer::start())
+                } else {
+                    None
+                };
 
                 // Token flow in canonical-slot coordinates. Matches are
                 // found on the parent's raw representative, so the
@@ -210,6 +269,15 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                     .map(|&(pi, ci)| (mw.states[sid].canon.edge_slots[pi], c.edge_slots[ci]))
                     .collect();
 
+                if let Some(bt) = bt {
+                    prof_tokens_ns += bt.elapsed_ns();
+                }
+
+                let lt = if profile {
+                    Some(ProfTimer::start())
+                } else {
+                    None
+                };
                 let cid = match canon_map.get(&c.form.edges) {
                     Some(&cid) => {
                         if mw.states[cid].step < step {
@@ -225,16 +293,29 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                         // never expanded); computed in Phase C.
                         pending.push((cid, fi, mi));
                         let canon = expanded[fi][mi].1.take().unwrap();
+                        let ct = if profile {
+                            Some(ProfTimer::start())
+                        } else {
+                            None
+                        };
+                        let child = expanded[fi][mi].0.child.clone();
+                        if let Some(ct) = ct {
+                            prof_clone_ns += ct.elapsed_ns();
+                        }
                         mw.states.push(StateRec {
                             id: cid,
                             step,
-                            state: expanded[fi][mi].0.child.clone(),
+                            state: child,
                             canon,
                         });
                         new_layer.push(cid);
                         cid
                     }
                 };
+
+                if let Some(lt) = lt {
+                    prof_lookup_ns += lt.elapsed_ns();
+                }
 
                 let eid = mw.events.len();
                 mw.events.push(Event {
@@ -262,17 +343,49 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
             }
         }
 
+        let brt = if profile {
+            Some(ProfTimer::start())
+        } else {
+            None
+        };
         branch_pairs.sort_unstable();
         branch_pairs.dedup();
         mw.branchial.extend(branch_pairs);
+        if let Some(brt) = brt {
+            prof_branchial_ns += brt.elapsed_ns();
+        }
         mw.layers.push(new_layer);
+        mw.stats.phase_b_ns += t.elapsed_ns();
 
         // Phase C: match sets for the new layer, optionally parallel;
         // assembled in pending (= new-state id) order.
+        let t = ProfTimer::start();
         frontier = phase_c(rule, &frontier, &expanded, &pending, opts, &mut mw.stats);
+        mw.stats.phase_c_ns += t.elapsed_ns();
+
+        // Serial teardown of the expansion buffers is real time at wide
+        // layers (~2M small allocs at depth 6) — attribute it.
+        let t = ProfTimer::start();
+        drop(expanded);
+        mw.stats.drop_ns += t.elapsed_ns();
+
         if frontier.is_empty() {
             break;
         }
+    }
+    if profile {
+        eprintln!(
+            "PROFILE phases: a={}ms b={}ms c={}ms drop={}ms | phase-b buckets: \
+             tokens={}ms lookup+intern={}ms state-clone={}ms branchial={}ms",
+            mw.stats.phase_a_ns / 1_000_000,
+            mw.stats.phase_b_ns / 1_000_000,
+            mw.stats.phase_c_ns / 1_000_000,
+            mw.stats.drop_ns / 1_000_000,
+            prof_tokens_ns / 1_000_000,
+            prof_lookup_ns / 1_000_000,
+            prof_clone_ns / 1_000_000,
+            prof_branchial_ns / 1_000_000,
+        );
     }
     mw
 }

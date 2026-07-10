@@ -83,6 +83,20 @@ fn main() {
         time_median("growth_depth8", 1, 7, || {
             let _ = evolve(&growth, single_loop.clone(), 8);
         }),
+        time_median("classic_depth6", 0, 3, || {
+            let _ = evolve(&classic, double_loop.clone(), 6);
+        }),
+        time_median("classic_depth6_threads4", 0, 3, || {
+            let _ = evolve_opts(
+                &classic,
+                double_loop.clone(),
+                &EvolveOpts {
+                    steps: 6,
+                    threads: 4,
+                    incremental: true,
+                },
+            );
+        }),
         time_median("canonicalize_chain20_x100", 1, 7, || {
             for _ in 0..100 {
                 let _ = multiway::canon::canonicalize(&chain20);
@@ -109,6 +123,15 @@ fn main() {
             r.name, r.median_ns, r.min_ns
         );
     }
+    // Phase attribution for the scaling work (Tier-1 counters, one run).
+    let mw = evolve(&classic, double_loop.clone(), 6);
+    println!(
+        "BENCH_PHASES classic_depth6 a_ms={} b_ms={} c_ms={} drop_ms={}",
+        mw.stats.phase_a_ns / 1_000_000,
+        mw.stats.phase_b_ns / 1_000_000,
+        mw.stats.phase_c_ns / 1_000_000,
+        mw.stats.drop_ns / 1_000_000
+    );
     println!();
     println!("| scenario | median (ms) | min (ms) |");
     println!("|---|---:|---:|");

@@ -134,3 +134,20 @@ fn baseline_final() {
     assert_eq!(layer_sizes, vec![1, 1, 3, 18, 156]);
     assert_eq!(mw.back_merges, 0);
 }
+
+/// A1 profiling: the always-on phase timers populate on any real run.
+/// (On wasm32 the cfg-gated shim returns 0 — the lib stays wasm-clean —
+/// but native tests must see real attribution.)
+#[test]
+fn phase_timers_populate() {
+    let rule = parse_rule("{{x,y}}->{{x,y},{y,z}}").unwrap();
+    let init = parse_state("{{0,0}}").unwrap();
+    let mw = evolve(&rule, init, 3);
+    assert!(mw.stats.phase_a_ns > 0, "phase A untimed");
+    assert!(mw.stats.phase_b_ns > 0, "phase B untimed");
+    assert!(mw.stats.phase_c_ns > 0, "phase C untimed");
+    // drop_ns can be ~0 for tiny runs but the field must exist and be
+    // populated by the timed drop path (>= 0 is trivially true; the
+    // compile-time existence is the pin).
+    let _ = mw.stats.drop_ns;
+}
