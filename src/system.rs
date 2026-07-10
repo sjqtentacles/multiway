@@ -543,6 +543,54 @@ fn phase_c(
 }
 
 impl MultiwaySystem {
+    /// Branchial pairs derived from the event list: per step, for each
+    /// parent, its distinct children, all unordered pairs, then
+    /// sort+dedup per step and concatenate — byte-identical to what
+    /// Phase B used to store (pinned by
+    /// `prop_branchial_method_equals_stored` during the transition and
+    /// by the export goldens forever).
+    ///
+    /// Construction detail: events arrive already grouped by step and,
+    /// within a step, contiguously per parent (Phase B pushes them in
+    /// (frontier, match) order), so one sequential pass with first-seen
+    /// child dedup suffices — no map. The per-step sort+dedup then
+    /// erases any residual ordering, which is what makes the derivation
+    /// order-insensitive and lets `prop_branchial_exact`'s independent
+    /// BTreeMap oracle stay a genuinely different computation.
+    pub fn branchial(&self) -> Vec<(usize, usize)> {
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        let mut i = 0usize;
+        while i < self.events.len() {
+            let step = self.events[i].step;
+            let mut step_pairs: Vec<(usize, usize)> = Vec::new();
+            while i < self.events.len() && self.events[i].step == step {
+                let from = self.events[i].from;
+                let mut children: Vec<usize> = Vec::new();
+                while i < self.events.len()
+                    && self.events[i].step == step
+                    && self.events[i].from == from
+                {
+                    let to = self.events[i].to;
+                    if !children.contains(&to) {
+                        children.push(to);
+                    }
+                    i += 1;
+                }
+                for a in 0..children.len() {
+                    for b in (a + 1)..children.len() {
+                        let lo = children[a].min(children[b]);
+                        let hi = children[a].max(children[b]);
+                        step_pairs.push((lo, hi));
+                    }
+                }
+            }
+            step_pairs.sort_unstable();
+            step_pairs.dedup();
+            out.extend(step_pairs);
+        }
+        out
+    }
+
     /// For each canonical state, the number of distinct paths from the
     /// initial state — i.e. how many nodes of the naive (unshared)
     /// evolution tree this single node represents. Computed by DP in

@@ -117,6 +117,34 @@ fn prop_branchial_exact() {
     });
 }
 
+/// The lazy-branchial transition pin: the derived method must equal the
+/// stored vector EXACTLY (byte-identical export is the point). Random
+/// systems don't guarantee back-merge coverage per run, so the reversal
+/// fixture below covers that corner explicitly.
+#[test]
+fn prop_branchial_method_equals_stored() {
+    prop(SEED ^ 7, "prop_branchial_method_equals_stored", |rng, _| {
+        let (rule, init, steps) = random_system(rng);
+        let mw = evolve(&rule, init, steps);
+        assert_eq!(mw.branchial(), mw.branchial);
+    });
+}
+
+/// Back-merge fixture: reversal on a 2-chain merges into EARLIER layers;
+/// the derived branchial must still match the stored vector exactly.
+#[test]
+fn branchial_method_equals_stored_with_back_merges() {
+    let rule = parse_rule("{{x,y}}->{{y,x}}").unwrap();
+    let init = parse_state("{{0,1},{1,2}}").unwrap();
+    let mw = evolve(&rule, init, 4);
+    assert!(mw.back_merges > 0, "fixture must actually back-merge");
+    assert_eq!(mw.branchial(), mw.branchial);
+    assert!(
+        !mw.branchial.is_empty(),
+        "fixture must have branchial pairs"
+    );
+}
+
 /// The flagship correctness property: when nothing back-merges, per-layer
 /// path-count sums equal the naive tree's layer sizes exactly, and the
 /// engine's canonical layer count equals the oracle's isomorphism-class
