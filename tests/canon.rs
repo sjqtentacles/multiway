@@ -7,7 +7,10 @@ mod common;
 use common::gen::{gen_renaming, gen_state, rename, shuffle_edges, StateCfg};
 use common::harness::prop;
 use common::oracle::iso_bruteforce;
-use multiway::canon::{canonical_form, canonicalize, canonicalize_with_leaf_count, isomorphic};
+use multiway::canon::{
+    canonical_form, canonicalize, canonicalize_colored, canonicalize_colored_unpruned,
+    canonicalize_unpruned_with_leaf_count, canonicalize_with_leaf_count, isomorphic,
+};
 use multiway::hypergraph::State;
 use multiway::rule::{parse_rule, parse_state};
 use multiway::system::evolve;
@@ -103,8 +106,83 @@ fn symmetric_cycle_forces_individualization() {
     let b = parse_state("{{7,3},{3,9},{9,7}}").unwrap();
     assert_eq!(canonical_form(&a), canonical_form(&b));
 
+    // B1 automorphism pruning: branch v0 -> leaf (incumbent); branch
+    // v1 -> equal-key leaf -> a rotation generator is recorded; branch
+    // v2 is orbit-equivalent to an explored branch and pruned. 2 leaves.
     let (_, leaves) = canonicalize_with_leaf_count(&a);
-    assert_eq!(leaves, 3, "3-cell individualization should visit 3 leaves");
+    assert_eq!(leaves, 2, "orbit pruning should skip the third branch");
+
+    // the unpruned discipline still visits all three
+    let (_, unpruned) = canonicalize_unpruned_with_leaf_count(&a);
+    assert_eq!(unpruned, 3);
+}
+
+/// THE B1 safety property: pruning may change LEAF COUNTS only — form
+/// AND witness must be byte-identical to the unpruned discipline, in
+/// both uncolored and colored modes (colored = confluence pin identity,
+/// safety-critical). The pruned branch's subtree is the g-image of an
+/// explored one; its leaf keys are EQUAL, and equal keys lose to the
+/// incumbent under the pinned first-found-wins tie rule.
+#[test]
+fn prop_aut_pruning_form_identical() {
+    prop(SEED ^ 4, "prop_aut_pruning_form_identical", |rng, i| {
+        // Alternate oracle-sized and WIDE states: the pruned-vs-unpruned
+        // comparison needs no brute-force oracle, so size is uncapped —
+        // 12-vertex duplicate/self-loop-biased states included.
+        let s = if i % 2 == 0 {
+            gen_state(rng, &StateCfg::oracle())
+        } else {
+            gen_state(rng, &StateCfg::wide())
+        };
+
+        let a = canonicalize(&s);
+        let (b, _) = canonicalize_unpruned_with_leaf_count(&s);
+        assert_eq!(a.form, b.form, "pruning changed the FORM");
+        assert_eq!(a.edge_slots, b.edge_slots, "pruning changed slots");
+        let mut am: Vec<(u32, u32)> = a.vertex_map.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut bm: Vec<(u32, u32)> = b.vertex_map.iter().map(|(k, v)| (*k, *v)).collect();
+        am.sort_unstable();
+        bm.sort_unstable();
+        assert_eq!(am, bm, "pruning changed the vertex witness");
+
+        // colored mode: pin every vertex distinctly half the time, or
+        // give symmetric duplicate colors (the interesting case)
+        let vs = s.vertices();
+        let dup = rng.chance(1, 2);
+        let colors: Vec<(u32, u64)> = vs
+            .iter()
+            .map(|&v| (v, if dup { (v % 2) as u64 } else { v as u64 + 1 }))
+            .collect();
+        let color_of = |v: u32| -> u64 {
+            colors
+                .iter()
+                .find(|(cv, _)| *cv == v)
+                .map(|(_, c)| *c)
+                .unwrap_or(0)
+        };
+        let ca = canonicalize_colored(&s, &color_of);
+        let cb = canonicalize_colored_unpruned(&s, &color_of);
+        assert_eq!(ca.canon.form, cb.canon.form, "colored form changed");
+        assert_eq!(ca.label_colors, cb.label_colors, "label colors changed");
+        assert_eq!(ca.canon.edge_slots, cb.canon.edge_slots);
+    });
+}
+
+/// Pathology pin: a directed 6-cycle is vertex-transitive (one cell of
+/// 6) — unpruned visits 6 leaves; with generators recorded from the
+/// first equal pair, the orbit closure collapses the rest.
+#[test]
+fn six_cycle_prunes_to_constant_leaves() {
+    let edges: Vec<Vec<u32>> = (0..6u32).map(|i| vec![i, (i + 1) % 6]).collect();
+    let cycle = State::new(edges);
+    let (_, unpruned) = canonicalize_unpruned_with_leaf_count(&cycle);
+    assert_eq!(unpruned, 6);
+    let (_, pruned) = canonicalize_with_leaf_count(&cycle);
+    assert!(
+        pruned <= 3,
+        "6-cycle should prune to <= 3 leaves, got {}",
+        pruned
+    );
 }
 
 /// Witness validity: edge_slots is a permutation mapping each raw edge to

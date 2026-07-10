@@ -264,7 +264,16 @@ pub fn canonicalize(state: &State) -> Canon {
 /// visited (pinned by tests to keep the search polynomial on the shapes
 /// the engine produces).
 pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
-    canonicalize_impl(state, u64::MAX).expect("unlimited leaf budget cannot abort")
+    canonicalize_impl(state, u64::MAX, true).expect("unlimited leaf budget cannot abort")
+}
+
+/// The pruning-disabled discipline. Test oracle ONLY: forms and
+/// witnesses are byte-identical to [`canonicalize`] (pinned by the B1
+/// safety fuzz) — only leaf counts differ. Hidden because no consumer
+/// should ever prefer the slower path.
+#[doc(hidden)]
+pub fn canonicalize_unpruned_with_leaf_count(state: &State) -> (Canon, u64) {
+    canonicalize_impl(state, u64::MAX, false).expect("unlimited leaf budget cannot abort")
 }
 
 /// Canonicalize with a hard cap on IR leaves visited, returning `None` on
@@ -275,10 +284,10 @@ pub fn canonicalize_with_leaf_count(state: &State) -> (Canon, u64) {
 /// note on `isomorphic` applies equally here). `canonicalize` is exactly
 /// this with an unlimited budget, byte-identical by construction.
 pub fn canonicalize_budgeted(state: &State, max_leaves: u64) -> Option<Canon> {
-    canonicalize_impl(state, max_leaves).map(|(c, _)| c)
+    canonicalize_impl(state, max_leaves, true).map(|(c, _)| c)
 }
 
-fn canonicalize_impl(state: &State, max_leaves: u64) -> Option<(Canon, u64)> {
+fn canonicalize_impl(state: &State, max_leaves: u64, prune: bool) -> Option<(Canon, u64)> {
     // Split into connected components (arity-0 edges carry no vertices and
     // pass straight through to the form).
     let verts = state.vertices();
@@ -327,7 +336,7 @@ fn canonicalize_impl(state: &State, max_leaves: u64) -> Option<(Canon, u64)> {
     }
 
     if roots.len() == 1 {
-        return canonicalize_connected(state, None, max_leaves);
+        return canonicalize_connected(state, None, max_leaves, prune);
     }
 
     // Per-component sub-states (raw edge indices retained); arity-0 edges
@@ -355,7 +364,7 @@ fn canonicalize_impl(state: &State, max_leaves: u64) -> Option<(Canon, u64)> {
                 .collect(),
         );
         let remaining = max_leaves.checked_sub(total_leaves)?;
-        let (canon, leaves) = canonicalize_connected(&sub, None, remaining)?;
+        let (canon, leaves) = canonicalize_connected(&sub, None, remaining, prune)?;
         total_leaves += leaves;
         comps.push(Comp {
             canon,
@@ -497,17 +506,35 @@ fn class_count(classes: &[usize]) -> usize {
     seen.len()
 }
 
+/// A winning IR leaf: (sorted edge list, label colors, labels per
+/// position, individualization path).
+type BestLeaf = (Vec<Edge>, Vec<u64>, Vec<u32>, Vec<usize>);
+
 struct IrCtx<'a> {
     edges: &'a [Edge],
     verts: &'a [Vertex],
     vidx: &'a DetMap<Vertex, usize>,
     /// input color per vertex position (colored mode; None = uncolored)
     input_colors: Option<&'a [u64]>,
-    /// best leaf so far: (sorted edge list, label_colors, labels per position)
-    best: Option<(Vec<Edge>, Vec<u64>, Vec<u32>)>,
+    /// best leaf so far (see [`BestLeaf`])
+    best: Option<BestLeaf>,
     leaves: u64,
     /// Leaf budget; exceeding it aborts the search (scan safety).
     max_leaves: u64,
+    /// Orbit-prune symmetric branches (B1). The unpruned path exists
+    /// only as a test oracle.
+    prune: bool,
+    /// Positions individualized on the current path (root -> here).
+    path: Vec<usize>,
+    /// Automorphism generators discovered from equal-key leaf pairs:
+    /// (position permutation, path of leaf A, path of leaf B). A
+    /// generator is valid at a node iff BOTH leaf paths extend the
+    /// node's path — the conservative discipline: both leaves then lie
+    /// under the node, both labelings refine its partition via the same
+    /// rank-normalized discipline, so the permutation stabilizes each
+    /// of its cells and maps a branch's subtree onto an equal-keyed
+    /// image (which loses to the incumbent under first-found-wins).
+    aut_gens: Vec<(Vec<u32>, Vec<usize>, Vec<usize>)>,
 }
 
 /// The IR search. Branching discipline (normative, the witness depends on
@@ -545,10 +572,24 @@ fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) -> bool {
             }
             None => Vec::new(),
         };
-        let candidate_key = (edge_list, label_colors, labels);
         match &ctx.best {
-            Some((be, bc, _)) if (be, bc) <= (&candidate_key.0, &candidate_key.1) => {}
-            _ => ctx.best = Some(candidate_key),
+            Some((be, bc, blabels, bpath)) if (be, bc) == (&edge_list, &label_colors) => {
+                // Equal keys: this leaf's labeling composed with the
+                // incumbent's is an automorphism. g(p) = the position
+                // holding, under the incumbent, the label this leaf
+                // gives p.
+                let mut inv_best = vec![0u32; n];
+                for (q, &lab) in blabels.iter().enumerate() {
+                    inv_best[lab as usize] = q as u32;
+                }
+                let g: Vec<u32> = labels.iter().map(|&l| inv_best[l as usize]).collect();
+                if g.iter().enumerate().any(|(p, &q)| p as u32 != q) {
+                    let bp = bpath.clone();
+                    ctx.aut_gens.push((g, bp, ctx.path.clone()));
+                }
+            }
+            Some((be, bc, _, _)) if (be, bc) <= (&edge_list, &label_colors) => {}
+            _ => ctx.best = Some((edge_list, label_colors, labels, ctx.path.clone())),
         }
         return true;
     }
@@ -565,16 +606,60 @@ fn ir_search(ctx: &mut IrCtx, mut classes: Vec<usize>, depth: usize) -> bool {
 
     // members in ascending raw-vertex-id order (verts is sorted, and
     // positions follow vertex order)
+    let mut explored: Vec<usize> = Vec::new();
     for pos in 0..n {
         if classes[pos] == target {
+            if ctx.prune && !explored.is_empty() && orbit_hits(ctx, pos, &explored) {
+                // pos is in the orbit of an explored branch under
+                // generators valid at this node: its subtree is an
+                // equal-keyed image — skip it (leaf counts change,
+                // best/forms cannot).
+                continue;
+            }
             let mut branch = classes.clone();
             branch[pos] = k; // fresh class; next refine rank-normalizes
-            if !ir_search(ctx, branch, depth + 1) {
+            ctx.path.push(pos);
+            let ok = ir_search(ctx, branch, depth + 1);
+            ctx.path.pop();
+            if !ok {
                 return false;
             }
+            explored.push(pos);
         }
     }
     true
+}
+
+/// Is `pos` reachable from any explored position under the generators
+/// valid at the current node? Forward closure suffices: permutations are
+/// finite-order, so inverses are reachable by repeated application.
+fn orbit_hits(ctx: &IrCtx, pos: usize, explored: &[usize]) -> bool {
+    let valid: Vec<&Vec<u32>> = ctx
+        .aut_gens
+        .iter()
+        .filter(|(_, pa, pb)| pa.starts_with(&ctx.path) && pb.starts_with(&ctx.path))
+        .map(|(g, _, _)| g)
+        .collect();
+    if valid.is_empty() {
+        return false;
+    }
+    let n = ctx.verts.len();
+    let mut seen = vec![false; n];
+    let mut queue = vec![pos];
+    seen[pos] = true;
+    while let Some(p) = queue.pop() {
+        if explored.contains(&p) {
+            return true;
+        }
+        for g in &valid {
+            let q = g[p] as usize;
+            if !seen[q] {
+                seen[q] = true;
+                queue.push(q);
+            }
+        }
+    }
+    false
 }
 
 /// Canonicalize a connected state (no component decomposition). `colors`
@@ -583,6 +668,7 @@ fn canonicalize_connected(
     state: &State,
     colors: Option<&[u64]>,
     max_leaves: u64,
+    prune: bool,
 ) -> Option<(Canon, u64)> {
     let verts = state.vertices();
     let n = verts.len();
@@ -609,11 +695,14 @@ fn canonicalize_connected(
         best: None,
         leaves: 0,
         max_leaves,
+        prune,
+        path: Vec::new(),
+        aut_gens: Vec::new(),
     };
     if !ir_search(&mut ctx, init_classes, 0) {
         return None;
     }
-    let (_, _, labels) = ctx.best.expect("search visited no leaves");
+    let (_, _, labels, _) = ctx.best.expect("search visited no leaves");
 
     let vertex_map: DetMap<Vertex, Vertex> = ctx
         .verts
@@ -632,9 +721,27 @@ fn canonicalize_connected(
 /// DISABLED in colored mode (identically-shaped components carrying
 /// different pins must not be interchanged).
 pub fn canonicalize_colored(state: &State, color: &dyn Fn(Vertex) -> u64) -> ColoredCanon {
+    canonicalize_colored_impl(state, color, true)
+}
+
+/// Pruning-disabled colored canonization — test oracle ONLY (see
+/// [`canonicalize_unpruned_with_leaf_count`]). Colored mode matters for
+/// the safety fuzz because pins are confluence identity: the leaf key
+/// includes label_colors, so equal-key generator recording is
+/// color-valid by construction, and this oracle proves it stays so.
+#[doc(hidden)]
+pub fn canonicalize_colored_unpruned(state: &State, color: &dyn Fn(Vertex) -> u64) -> ColoredCanon {
+    canonicalize_colored_impl(state, color, false)
+}
+
+fn canonicalize_colored_impl(
+    state: &State,
+    color: &dyn Fn(Vertex) -> u64,
+    prune: bool,
+) -> ColoredCanon {
     let verts = state.vertices();
     let cols: Vec<u64> = verts.iter().map(|&v| color(v)).collect();
-    let (canon, _) = canonicalize_connected(state, Some(&cols), u64::MAX)
+    let (canon, _) = canonicalize_connected(state, Some(&cols), u64::MAX, prune)
         .expect("unlimited leaf budget cannot abort");
     let n = verts.len();
     let mut label_colors = vec![0u64; n];
