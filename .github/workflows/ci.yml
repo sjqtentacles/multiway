@@ -103,7 +103,7 @@ jobs:
         run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
       - name: build the engine as wasm
         run: cargo rustc --lib --profile wasm --target wasm32-unknown-unknown --crate-type cdylib
-      - name: size budget (abort criterion from the design: ~300 KB)
+      - name: "size budget (abort criterion from the design: ~300 KB)"
         run: |
           W=target/wasm32-unknown-unknown/wasm/multiway.wasm
           SIZE=$(stat -c%s "$W")
