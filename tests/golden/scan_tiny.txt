@@ -1,0 +1,20 @@
+multiway atlas — top 10 of 193 rule classes
+space: lhs<=1 rhs<=2 arity 1..=2 vars<=3
+probe: steps 3 states<=60 events<=2000 edges<=24 leaves<=2000 run<=24
+scan: exhaustive
+
+┌─────┬────────┬────┬────────────────────────────────────┬─────────────┬──────────┬──────────────┐
+│   # │  score │  × │ rule                               │ growth      │ layers   │ confluence   │
+├─────┼────────┼────┼────────────────────────────────────┼─────────────┼──────────┼──────────────┤
+│   1 │  7,127 │  1 │ {{a,b}}->{{b,c},{c,a}}             │ pol/exp/sta │ ▁▁▄█     │ confluent    │
+│   2 │  6,627 │  1 │ {{a,b}}->{{a,c},{c,b}}             │ sta/sta/pol │ ▁▁██     │ confluent    │
+│   3 │  6,627 │  1 │ {{a,b}}->{{b,a},{c,c}}             │ sta/sta/pol │ ▁▁██     │ confluent    │
+│   4 │  6,377 │  1 │ {{a,b}}->{{a,b},{b,a}}             │ sta/pol/pol │ ▁▁██     │ confluent    │
+│   5 │  6,377 │  1 │ {{a,b}}->{{b,a},{b,a}}             │ sta/pol/pol │ ▁▁██     │ confluent    │
+│   6 │  6,327 │  1 │ {{a,b}}->{{a,c},{c,a}}             │ pol/pol/exp │ ▁▁▅█     │ confluent    │
+│   7 │  6,327 │  1 │ {{a,b}}->{{b,c},{c,b}}             │ pol/pol/exp │ ▁▁▅█     │ confluent    │
+│   8 │  6,290 │  1 │ {{a,b}}->{{a},{b,a}}               │ sta/sta/pol │ ▁▁█▁     │ confluent    │
+│   9 │  6,290 │  1 │ {{a,b}}->{{b},{b,a}}               │ sta/sta/pol │ ▁▁█▁     │ confluent    │
+│  10 │  6,290 │  1 │ {{a,b}}->{{b,a},{b,c}}             │ exp/pol/exp │ ▁▁▅█     │ confluent    │
+└─────┴────────┴────┴────────────────────────────────────┴─────────────┴──────────┴──────────────┘
+growth codes: die sta per lin pol exp BUD (BUD = budget-hit, NOT proven chaotic)

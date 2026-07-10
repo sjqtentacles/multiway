@@ -13,7 +13,7 @@ use crate::system::MultiwaySystem;
 /// are escaped because they are legal JSON but illegal in JS string
 /// literals under pre-ES2019 parsers. Rule/state notation can't currently
 /// produce any of these — this is defense in depth for future fields.
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     for c in s.chars() {
         match c {

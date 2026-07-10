@@ -9,7 +9,7 @@ use multiway::rulespace::SpaceBudget;
 use multiway::scan::{scan, ScanOpts, EXHAUSTIVE_CAP};
 
 fn tiny_space() -> SpaceBudget {
-    // 124-class space: exhaustive in milliseconds even in debug
+    // 193-class space: exhaustive in milliseconds even in debug
     SpaceBudget {
         max_lhs: 1,
         max_rhs: 2,

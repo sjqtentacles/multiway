@@ -74,6 +74,28 @@ pub struct AtlasEntry {
     pub confluence: Option<ConflClass>,
 }
 
+/// Which seed best showcases a rule: prefer `Ran` over `Halted` over
+/// `Exploded`, then more canonical states, then the lowest seed index.
+/// Deterministic — used by the terminal table's sparkline, the atlas
+/// page's growth curve, and the baked per-rule viewer.
+pub fn showcase_seed(p: &ProbeResult) -> usize {
+    let pref = |o: Outcome| -> u8 {
+        match o {
+            Outcome::Ran => 2,
+            Outcome::Halted { .. } => 1,
+            Outcome::Exploded(_) => 0,
+        }
+    };
+    let mut best = 0usize;
+    for (i, s) in p.seeds.iter().enumerate().skip(1) {
+        let b = &p.seeds[best];
+        if (pref(s.outcome), s.states) > (pref(b.outcome), b.states) {
+            best = i;
+        }
+    }
+    best
+}
+
 /// Tier-1 interestingness score: a pure integer function of the probe.
 pub fn score_tier1(p: &ProbeResult) -> i64 {
     let n = p.seeds.len().max(1) as i64;
