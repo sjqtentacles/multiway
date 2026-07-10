@@ -151,3 +151,58 @@ fn phase_timers_populate() {
     // compile-time existence is the pin).
     let _ = mw.stats.drop_ns;
 }
+
+/// Depth-6 thread byte-equality — the regime that actually stresses
+/// Phase B ordering (24.7k-state final layer). Release-only via the CI
+/// perf job (`cargo test --release -- --ignored`).
+#[test]
+#[ignore]
+fn depth6_thread_byte_equality() {
+    let rule = parse_rule(CLASSIC).unwrap();
+    let init = parse_state("{{0,0},{0,0}}").unwrap();
+    let render = |t: usize| {
+        let mw = evolve_opts(
+            &rule,
+            init.clone(),
+            &EvolveOpts {
+                steps: 6,
+                threads: t,
+                incremental: true,
+            },
+        );
+        bundle_json(&rule.text, "{{0,0},{0,0}}", &mw, None)
+    };
+    let serial = render(1);
+    assert_eq!(serial, render(4), "4 threads changed depth-6 output");
+}
+
+/// Scaling smoke with generous margin (measured 0.77x at 4 threads on a
+/// warm process; shared CI runners are noisy, so the bound only catches
+/// a wholesale loss of parallelism). Release-only.
+#[test]
+#[ignore]
+fn depth6_scaling_smoke() {
+    let rule = parse_rule(CLASSIC).unwrap();
+    let init = parse_state("{{0,0},{0,0}}").unwrap();
+    let time_one = |t: usize| {
+        let start = std::time::Instant::now();
+        let _ = evolve_opts(
+            &rule,
+            init.clone(),
+            &EvolveOpts {
+                steps: 6,
+                threads: t,
+                incremental: true,
+            },
+        );
+        start.elapsed()
+    };
+    let serial = time_one(1);
+    let threaded = time_one(4);
+    assert!(
+        threaded < serial,
+        "4 threads slower than serial: {:?} vs {:?}",
+        threaded,
+        serial
+    );
+}

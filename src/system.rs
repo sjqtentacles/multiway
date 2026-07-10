@@ -204,8 +204,6 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
     // wasm — safe everywhere.
     let profile = std::env::var("MULTIWAY_PROFILE").is_ok();
     let mut prof_lookup_ns: u128 = 0;
-    let mut prof_clone_ns: u128 = 0;
-    let mut prof_tokens_ns: u128 = 0;
     let mut prof_branchial_ns: u128 = 0;
     let steps = opts.steps;
     let mut mw = MultiwaySystem {
@@ -244,7 +242,7 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
 
         // Phase A: pure per-match work, optionally parallel.
         let t = ProfTimer::start();
-        let mut expanded: Vec<Vec<(Application, Option<Canon>)>> =
+        let mut expanded: Vec<Vec<Expanded>> =
             phase_a(rule, &mw.states, &frontier, opts.threads, &mut mw.stats);
         mw.stats.phase_a_ns += t.elapsed_ns();
 
@@ -256,38 +254,9 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
             let sid = *sid;
             let mut children: Vec<usize> = Vec::new();
 
-            for (mi, m) in matches.iter().enumerate() {
-                let app = &expanded[fi][mi].0;
-                let c = expanded[fi][mi].1.as_ref().unwrap();
-                let bt = if profile {
-                    Some(ProfTimer::start())
-                } else {
-                    None
-                };
-
-                // Token flow in canonical-slot coordinates. Matches are
-                // found on the parent's raw representative, so the
-                // parent's own edge_slots apply; the child's slots index
-                // the SHARED canonical edge list even when the child
-                // merges (byte-equal forms).
-                let mut consumed: Vec<usize> = m
-                    .edge_idx
-                    .iter()
-                    .map(|&i| mw.states[sid].edge_slots[i])
-                    .collect();
-                consumed.sort_unstable();
-                let mut produced: Vec<usize> =
-                    app.produced.clone().map(|i| c.edge_slots[i]).collect();
-                produced.sort_unstable();
-                let passthrough: Vec<(usize, usize)> = app
-                    .kept
-                    .iter()
-                    .map(|&(pi, ci)| (mw.states[sid].edge_slots[pi], c.edge_slots[ci]))
-                    .collect();
-
-                if let Some(bt) = bt {
-                    prof_tokens_ns += bt.elapsed_ns();
-                }
+            for (mi, _m) in matches.iter().enumerate() {
+                let tokens = expanded[fi][mi].tokens.take().unwrap();
+                let c = expanded[fi][mi].canon.as_ref().unwrap();
 
                 let lt = if profile {
                     Some(ProfTimer::start())
@@ -312,16 +281,17 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                         // states get a match set (merged children are
                         // never expanded); computed in Phase C.
                         pending.push((cid, fi, mi));
-                        let canon = expanded[fi][mi].1.take().unwrap();
-                        let ct = if profile {
-                            Some(ProfTimer::start())
-                        } else {
-                            None
-                        };
-                        let child = expanded[fi][mi].0.child.clone();
-                        if let Some(ct) = ct {
-                            prof_clone_ns += ct.elapsed_ns();
-                        }
+                        let canon = expanded[fi][mi].canon.take().unwrap();
+                        // MOVE the child out (A4): no serial clone. The
+                        // Application keeps kept/produced for Phase C,
+                        // which reads the child from mw.states instead.
+                        let child = std::mem::replace(
+                            &mut expanded[fi][mi].app.child,
+                            State {
+                                edges: Vec::new(),
+                                next_vertex: 0,
+                            },
+                        );
                         mw.states.push(StateRec {
                             id: cid,
                             step,
@@ -346,11 +316,7 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                     to: cid,
                     step,
                 });
-                mw.event_tokens.push(EventTokens {
-                    consumed,
-                    produced,
-                    passthrough,
-                });
+                mw.event_tokens.push(tokens);
                 if !children.contains(&cid) {
                     children.push(cid);
                 }
@@ -386,7 +352,15 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         // (~130 MB) computed only to be dropped.
         let t = ProfTimer::start();
         frontier = if step < steps {
-            phase_c(rule, &frontier, &expanded, &pending, opts, &mut mw.stats)
+            phase_c(
+                rule,
+                &mw.states,
+                &frontier,
+                &expanded,
+                &pending,
+                opts,
+                &mut mw.stats,
+            )
         } else {
             Vec::new()
         };
@@ -405,14 +379,12 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
     if profile {
         eprintln!(
             "PROFILE phases: a={}ms b={}ms c={}ms drop={}ms | phase-b buckets: \
-             tokens={}ms lookup+intern={}ms state-clone={}ms branchial={}ms",
+             lookup+intern={}ms branchial={}ms",
             mw.stats.phase_a_ns / 1_000_000,
             mw.stats.phase_b_ns / 1_000_000,
             mw.stats.phase_c_ns / 1_000_000,
             mw.stats.drop_ns / 1_000_000,
-            prof_tokens_ns / 1_000_000,
             prof_lookup_ns / 1_000_000,
-            prof_clone_ns / 1_000_000,
             prof_branchial_ns / 1_000_000,
         );
     }
@@ -423,22 +395,57 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
 /// the child. Pure per-item work — workers own round-robin index sets and
 /// return results collected BY INDEX, so the merged vector is identical
 /// for any thread count or scheduling.
+/// Per-match Phase A output: the application, the child's canon (taken
+/// by Phase B for new states), and the event's token flow — all pure
+/// functions of (parent StateRec, Match, Application, child Canon), so
+/// they parallelize; Phase B only moves them into place.
+struct Expanded {
+    app: Application,
+    canon: Option<Canon>,
+    tokens: Option<EventTokens>,
+}
+
 fn phase_a(
     rule: &Rule,
     states: &[StateRec],
     frontier: &[(usize, Vec<Match>)],
     threads: usize,
     stats: &mut EvolveStats,
-) -> Vec<Vec<(Application, Option<Canon>)>> {
-    let expand_one = |fi: usize| -> Vec<(Application, Option<Canon>)> {
+) -> Vec<Vec<Expanded>> {
+    let expand_one = |fi: usize| -> Vec<Expanded> {
         let (sid, matches) = &frontier[fi];
-        let parent = &states[*sid].state;
+        let parent = &states[*sid];
         matches
             .iter()
             .map(|m| {
-                let app = apply_full(parent, rule, m);
+                let app = apply_full(&parent.state, rule, m);
                 let c = canonicalize(&app.child);
-                (app, Some(c))
+                // Token flow in canonical-slot coordinates. Matches were
+                // found on the parent's raw representative, so its own
+                // edge_slots apply; the child's slots index the SHARED
+                // canonical space even when it later merges (byte-equal
+                // forms). Uses THIS event's canon — no dedup knowledge
+                // needed, hence computable here in parallel.
+                let mut consumed: Vec<usize> =
+                    m.edge_idx.iter().map(|&i| parent.edge_slots[i]).collect();
+                consumed.sort_unstable();
+                let mut produced: Vec<usize> =
+                    app.produced.clone().map(|i| c.edge_slots[i]).collect();
+                produced.sort_unstable();
+                let passthrough: Vec<(usize, usize)> = app
+                    .kept
+                    .iter()
+                    .map(|&(pi, ci)| (parent.edge_slots[pi], c.edge_slots[ci]))
+                    .collect();
+                Expanded {
+                    app,
+                    canon: Some(c),
+                    tokens: Some(EventTokens {
+                        consumed,
+                        produced,
+                        passthrough,
+                    }),
+                }
             })
             .collect()
     };
@@ -449,8 +456,7 @@ fn phase_a(
     }
     stats.workers_spawned = stats.workers_spawned.max(workers);
 
-    let mut merged: Vec<Vec<(Application, Option<Canon>)>> =
-        (0..frontier.len()).map(|_| Vec::new()).collect();
+    let mut merged: Vec<Vec<Expanded>> = (0..frontier.len()).map(|_| Vec::new()).collect();
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..workers)
             .map(|t| {
@@ -479,19 +485,23 @@ fn phase_a(
 /// fanned out the same way and assembled in new-state-id order.
 fn phase_c(
     rule: &Rule,
+    states: &[StateRec],
     frontier: &[(usize, Vec<Match>)],
-    expanded: &[Vec<(Application, Option<Canon>)>],
+    expanded: &[Vec<Expanded>],
     pending: &[(usize, usize, usize)],
     opts: &EvolveOpts,
     stats: &mut EvolveStats,
 ) -> Vec<(usize, Vec<Match>)> {
     let compute_one = |&(cid, fi, mi): &(usize, usize, usize)| -> (usize, Vec<Match>) {
         let (_, matches) = &frontier[fi];
-        let app = &expanded[fi][mi].0;
+        // the child was MOVED into its StateRec in Phase B (pending
+        // entries are exactly the new states)
+        let child = &states[cid].state;
+        let app = &expanded[fi][mi].app;
         let ms = if opts.incremental {
-            delta_matches(rule, matches, &matches[mi], app)
+            delta_matches(rule, matches, &matches[mi], app, child)
         } else {
-            find_matches(&app.child, rule)
+            find_matches(child, rule)
         };
         (cid, ms)
     };

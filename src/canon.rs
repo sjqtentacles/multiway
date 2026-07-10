@@ -415,9 +415,11 @@ fn finish_from_vertex_map(
     });
     let mut edge_slots = vec![0usize; relabeled.len()];
     let mut form_edges: Vec<Edge> = Vec::with_capacity(relabeled.len());
+    let mut relabeled = relabeled;
     for (slot, &raw) in order.iter().enumerate() {
         edge_slots[raw] = slot;
-        form_edges.push(relabeled[raw].clone());
+        // each raw index appears exactly once in `order` — move, don't clone
+        form_edges.push(std::mem::take(&mut relabeled[raw]));
     }
     let n = vertex_map.len() as u32;
     (
@@ -451,7 +453,12 @@ fn refine_exact(edges: &[Edge], vidx: &DetMap<Vertex, usize>, classes: &mut [usi
             .iter()
             .map(|e| (e.len(), e.iter().map(|v| classes[vidx[v]]).collect()))
             .collect();
-        let mut sig_sorted: Vec<(usize, Vec<usize>)> = esigs.clone();
+        // dense signature ids WITHOUT cloning the signatures: sort/dedup
+        // REFERENCES by content (identical ordering to sorting values —
+        // the depth-6 profiling showed allocation volume, not compute,
+        // is the engine's cost, so refinement must not clone its
+        // per-round vectors)
+        let mut sig_sorted: Vec<&(usize, Vec<usize>)> = esigs.iter().collect();
         sig_sorted.sort();
         sig_sorted.dedup();
 
@@ -460,7 +467,7 @@ fn refine_exact(edges: &[Edge], vidx: &DetMap<Vertex, usize>, classes: &mut [usi
         let mut vkeys: Vec<(usize, Vec<(usize, usize)>)> =
             classes.iter().map(|&c| (c, Vec::new())).collect();
         for (ei, e) in edges.iter().enumerate() {
-            let sig_id = sig_sorted.binary_search(&esigs[ei]).unwrap();
+            let sig_id = sig_sorted.binary_search(&&esigs[ei]).unwrap();
             for (pos, v) in e.iter().enumerate() {
                 vkeys[vidx[v]].1.push((sig_id, pos));
             }
@@ -469,12 +476,12 @@ fn refine_exact(edges: &[Edge], vidx: &DetMap<Vertex, usize>, classes: &mut [usi
             k.1.sort_unstable();
         }
 
-        // rank-normalize to dense ids ordered by key
-        let mut uniq: Vec<(usize, Vec<(usize, usize)>)> = vkeys.clone();
+        // rank-normalize to dense ids ordered by key — again by reference
+        let mut uniq: Vec<&(usize, Vec<(usize, usize)>)> = vkeys.iter().collect();
         uniq.sort();
         uniq.dedup();
         for (i, k) in vkeys.iter().enumerate() {
-            classes[i] = uniq.binary_search(k).unwrap();
+            classes[i] = uniq.binary_search(&k).unwrap();
         }
 
         if class_count(classes) == count_before {

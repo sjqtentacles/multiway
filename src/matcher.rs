@@ -164,13 +164,16 @@ pub fn apply(state: &State, rule: &Rule, m: &Match) -> State {
 /// per position, so its output is lexicographic in `edge_idx`, and
 /// `edge_idx` determines the binding). Byte-stable downstream: event ids,
 /// causal first-match, branchial pairs.
+/// `child` is passed explicitly (normally `&app.child`, but evolve moves
+/// the child out of the Application before Phase C and supplies the
+/// stored copy instead).
 pub fn delta_matches(
     rule: &Rule,
     parent_matches: &[Match],
     m: &Match,
     app: &Application,
+    child: &State,
 ) -> Vec<Match> {
-    let child = &app.child;
     let mut out: Vec<Match> = Vec::new();
 
     // survivors (app.kept is in parent order — binary search by parent idx)

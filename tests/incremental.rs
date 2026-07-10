@@ -31,7 +31,7 @@ fn delta_equals_full_hand_case() {
     for _ in 0..3 {
         let m = ms[0].clone();
         let app = apply_full(&state, &rule, &m);
-        let dm = delta_matches(&rule, &ms, &m, &app);
+        let dm = delta_matches(&rule, &ms, &m, &app, &app.child);
         assert_eq!(as_pairs(&dm), as_pairs(&find_matches(&app.child, &rule)));
         state = app.child;
         ms = dm;
@@ -57,7 +57,7 @@ fn delta_multi_produced_no_duplicates() {
         "everything consumed: child is all-produced"
     );
 
-    let dm = delta_matches(&rule, &ms, &m, &app);
+    let dm = delta_matches(&rule, &ms, &m, &app, &app.child);
     let full = find_matches(&app.child, &rule);
     assert_eq!(as_pairs(&dm), as_pairs(&full));
 
@@ -82,7 +82,7 @@ fn prop_delta_equals_full_fuzz() {
         let pick = rng.range_usize(0, ms.len() - 1);
         let m = ms[pick].clone();
         let app = apply_full(&s, &rule, &m);
-        let dm = delta_matches(&rule, &ms, &m, &app);
+        let dm = delta_matches(&rule, &ms, &m, &app, &app.child);
         assert_eq!(
             as_pairs(&dm),
             as_pairs(&find_matches(&app.child, &rule)),

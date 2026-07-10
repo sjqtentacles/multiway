@@ -81,7 +81,7 @@ fn run_sequential(rule: &Rule, init: State, max_events: usize) -> CausalRun {
         for &(pi, ci) in &app.kept {
             new_creators[ci] = creators[pi];
         }
-        ms = delta_matches(rule, &ms, &m, &app);
+        ms = delta_matches(rule, &ms, &m, &app, &app.child);
         state = app.child;
         creators = new_creators;
     }
