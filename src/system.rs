@@ -85,13 +85,16 @@ pub struct Event {
 /// `(state id, slot)` where `slot` indexes the state's canonical sorted
 /// edge list — the engine's fixed token-identity convention (see `teg`).
 pub struct EventTokens {
-    /// Parent canonical slots consumed (sorted).
-    pub consumed: Vec<usize>,
+    /// Parent canonical slots consumed (sorted). Slots index a state's
+    /// canonical edge list, which is bounded by edges-per-state — `u32`
+    /// halves the passthrough footprint at depth 6+ with headroom to
+    /// spare (a 4-billion-edge state is beyond any budget here).
+    pub consumed: Vec<u32>,
     /// Child canonical slots produced (sorted).
-    pub produced: Vec<usize>,
+    pub produced: Vec<u32>,
     /// `(parent_slot, child_slot)` for every edge that rode through
     /// untouched, in parent-edge order.
-    pub passthrough: Vec<(usize, usize)>,
+    pub passthrough: Vec<(u32, u32)>,
 }
 
 /// A multiway evolution: canonical states, events, and derived structure.
@@ -397,16 +400,22 @@ fn phase_a(
                 // canonical space even when it later merges (byte-equal
                 // forms). Uses THIS event's canon — no dedup knowledge
                 // needed, hence computable here in parallel.
-                let mut consumed: Vec<usize> =
-                    m.edge_idx.iter().map(|&i| parent.edge_slots[i]).collect();
+                let mut consumed: Vec<u32> = m
+                    .edge_idx
+                    .iter()
+                    .map(|&i| parent.edge_slots[i] as u32)
+                    .collect();
                 consumed.sort_unstable();
-                let mut produced: Vec<usize> =
-                    app.produced.clone().map(|i| c.edge_slots[i]).collect();
+                let mut produced: Vec<u32> = app
+                    .produced
+                    .clone()
+                    .map(|i| c.edge_slots[i] as u32)
+                    .collect();
                 produced.sort_unstable();
-                let passthrough: Vec<(usize, usize)> = app
+                let passthrough: Vec<(u32, u32)> = app
                     .kept
                     .iter()
-                    .map(|&(pi, ci)| (parent.edge_slots[pi], c.edge_slots[ci]))
+                    .map(|&(pi, ci)| (parent.edge_slots[pi] as u32, c.edge_slots[ci] as u32))
                     .collect();
                 Expanded {
                     app,

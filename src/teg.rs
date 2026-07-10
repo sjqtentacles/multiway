@@ -68,12 +68,12 @@ pub fn build(mw: &MultiwaySystem) -> TokenEventGraph {
             let eid = idx + 1;
             let et = &mw.event_tokens[idx];
             for &s in &et.produced {
-                changed |= insert_sorted(&mut creators[e.to][s], eid);
+                changed |= insert_sorted(&mut creators[e.to][s as usize], eid);
             }
             for &(ps, cs) in &et.passthrough {
-                let src = creators[e.from][ps].clone();
+                let src = creators[e.from][ps as usize].clone();
                 for c in src {
-                    changed |= insert_sorted(&mut creators[e.to][cs], c);
+                    changed |= insert_sorted(&mut creators[e.to][cs as usize], c);
                 }
             }
         }
@@ -114,7 +114,7 @@ pub fn build(mw: &MultiwaySystem) -> TokenEventGraph {
     for (idx, e) in mw.events.iter().enumerate() {
         let eid = idx + 1;
         for &ps in &mw.event_tokens[idx].consumed {
-            for &c in &creators[e.from][ps] {
+            for &c in &creators[e.from][ps as usize] {
                 causal.push((c, eid));
             }
         }
@@ -150,7 +150,7 @@ pub fn build(mw: &MultiwaySystem) -> TokenEventGraph {
     }
 }
 
-fn sorted_overlap(a: &[usize], b: &[usize]) -> bool {
+fn sorted_overlap(a: &[u32], b: &[u32]) -> bool {
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
         match a[i].cmp(&b[j]) {

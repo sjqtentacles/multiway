@@ -9,12 +9,54 @@
 
 mod common;
 
+use common::gen::{gen_rule_text, gen_state, RuleCfg, StateCfg};
+use common::harness::prop;
 use common::jsonck::check_json;
 use multiway::export::bundle_json;
 use multiway::matcher::{apply_full, find_matches};
 use multiway::rule::{parse_rule, parse_state};
 use multiway::system::evolve;
 use multiway::teg;
+
+const PROP_SEED: u64 = 0x00C0_FFEE_0000_000B;
+
+/// The u32-slot representation's range invariant, over RANDOM systems:
+/// every token slot indexes inside its state's canonical edge list —
+/// the cast to u32 can never have truncated (edges-per-state is orders
+/// of magnitude below u32::MAX under any budget).
+#[test]
+fn prop_token_slots_in_range() {
+    prop(PROP_SEED, "prop_token_slots_in_range", |rng, _| {
+        let rule = parse_rule(&gen_rule_text(rng, &RuleCfg::default())).unwrap();
+        let init = gen_state(
+            rng,
+            &StateCfg {
+                max_vertices: 4,
+                max_edges: 3,
+                max_arity: 3,
+                dup_pct: 25,
+                self_loop_pct: 25,
+                sparse_labels: false,
+            },
+        );
+        let steps = rng.range_usize(1, 3);
+        let mw = evolve(&rule, init, steps);
+        for (idx, e) in mw.events.iter().enumerate() {
+            let et = &mw.event_tokens[idx];
+            let pn = mw.states[e.from].form_ids.len();
+            let cn = mw.states[e.to].form_ids.len();
+            for &s in &et.consumed {
+                assert!((s as usize) < pn, "consumed slot out of range");
+            }
+            for &s in &et.produced {
+                assert!((s as usize) < cn, "produced slot out of range");
+            }
+            for &(ps, cs) in &et.passthrough {
+                assert!((ps as usize) < pn && (cs as usize) < cn);
+            }
+        }
+    });
+}
 
 /// apply_full's layout contract (compile-red here in M3 — M5's incremental
 /// matcher builds on it, and it would be green-on-arrival there).
@@ -52,15 +94,17 @@ fn event_tokens_recorded_growth_rule() {
         assert_eq!(et.consumed.len(), 1);
         assert_eq!(et.produced.len(), 2);
         assert_eq!(et.passthrough.len(), parent_edges - 1);
+        // the u32 slot representation: every slot must fit its
+        // state's edge count (far below u32::MAX by budget)
         for &s in &et.consumed {
-            assert!(s < parent_edges);
+            assert!((s as usize) < parent_edges);
         }
         for &s in &et.produced {
-            assert!(s < child_edges);
+            assert!((s as usize) < child_edges);
         }
         for &(ps, cs) in &et.passthrough {
-            assert!(ps < parent_edges);
-            assert!(cs < child_edges);
+            assert!((ps as usize) < parent_edges);
+            assert!((cs as usize) < child_edges);
         }
     }
 }
