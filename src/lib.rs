@@ -33,6 +33,7 @@
 //! - [`confluence`]: critical-pair analysis with strong joinability
 //! - [`lint`]: static rule analysis (conservation, termination)
 //! - [`rulespace`]: rule-space enumeration modulo equivalence (the scanner substrate)
+//! - [`probe`]: bounded deterministic behavior probing (the scanner instrument)
 //! - [`store`]: hash-consed edge store (cross-state structural sharing)
 //! - [`export`]: JSON bundling for the HTML viewer
 //! - [`report`] / [`stats`]: deterministic terminal rendering
@@ -47,6 +48,7 @@ pub mod export;
 pub mod hypergraph;
 pub mod lint;
 pub mod matcher;
+pub mod probe;
 pub mod report;
 pub mod rule;
 pub mod rulespace;
