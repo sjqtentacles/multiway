@@ -98,6 +98,9 @@ impl SpaceBudget {
     }
 }
 
+/// A canonicalized (lhs, rhs) side pair.
+type SidePair = (Vec<Vec<u8>>, Vec<Vec<u8>>);
+
 fn sort_side(side: &mut [Vec<u8>]) {
     side.sort_by(|a, b| (a.len(), &a[..]).cmp(&(b.len(), &b[..])));
 }
@@ -136,8 +139,8 @@ fn apply_perm(side: &[Vec<u8>], perm: &[u8]) -> Vec<Vec<u8>> {
 
 /// Canonicalize a `(lhs, rhs)` pair over a universe of `n_universe`
 /// variable names: minimum over all bijections of the universe.
-fn canon_pair(lhs: &[Vec<u8>], rhs: &[Vec<u8>], n_universe: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-    let mut best: Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> = None;
+fn canon_pair(lhs: &[Vec<u8>], rhs: &[Vec<u8>], n_universe: usize) -> SidePair {
+    let mut best: Option<SidePair> = None;
     for_each_perm(n_universe, |perm| {
         let cand = (apply_perm(lhs, perm), apply_perm(rhs, perm));
         match &best {
