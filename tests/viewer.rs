@@ -95,5 +95,8 @@ fn baked_html_is_complete() {
         "placeholder survived baking"
     );
     assert!(html.contains("\"teg\":"), "teg section missing from bundle");
-    assert!(html.contains("const DATA = {"), "bundle not inlined");
+    assert!(
+        html.contains("const BOOT_DATA = {"),
+        "bundle not inlined into the boot binding"
+    );
 }

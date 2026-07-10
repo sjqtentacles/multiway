@@ -177,7 +177,9 @@
 <footer>drag to pan · scroll / pinch to zoom · double-click to reset · click or tap a state to inspect · keys: <b>C</b> cycle tabs · <b>&#8592;&#8594;&#8593;&#8595;</b> walk states · <b>P</b> play · <b>R</b> reset view · <b>+/&#8722;</b> zoom</footer>
 
 <script>
-const DATA = __DATA_JSON__;
+/* Baked by the CLI: --html inlines the bundle; --playground bakes null
+   and the wasm panel drives loadData() per run. */
+const BOOT_DATA = __DATA_JSON__;
 
 /* ---------- theme tokens (read live so scheme switches re-style) ---------- */
 function tok(name) { return getComputedStyle(document.body).getPropertyValue(name).trim(); }
@@ -188,15 +190,12 @@ function stepColor(step, maxStep) {
 }
 const fmt = s => { try { return BigInt(s).toLocaleString('en-US'); } catch (e) { return String(s); } };
 
-/* ---------- header ---------- */
-const MW = DATA.multiway;
-const TEG = DATA.teg;
-const hasTeg = !!(TEG && ((TEG.causal && TEG.causal.length) || (TEG.branchialEvents && TEG.branchialEvents.length)));
-const merged = MW.backMerges > 0; // walk counts are meaningless in a merged DAG
-const maxStep = MW.layers.length - 1;
-document.getElementById('ruleText').textContent = DATA.rule + '   from ' + DATA.init;
-document.getElementById('ruleText').title = DATA.rule + ' from ' + DATA.init;
-(function stats() {
+/* ---------- data bindings (re-assigned by loadData) ---------- */
+let DATA = null, MW = null, TEG = null;
+let hasTeg = false, merged = false, maxStep = 0;
+function renderHeader() {
+  document.getElementById('ruleText').textContent = DATA.rule + '   from ' + DATA.init;
+  document.getElementById('ruleText').title = DATA.rule + ' from ' + DATA.init;
   const bits = [
     '<span><b>' + MW.states.length.toLocaleString('en-US') + '</b> canonical states</span>',
     '<span><b>' + MW.events.length.toLocaleString('en-US') + '</b> events</span>',
@@ -210,7 +209,7 @@ document.getElementById('ruleText').title = DATA.rule + ' from ' + DATA.init;
       last.canonical.toLocaleString('en-US') + '</b> shared (<b>' + ratio.toFixed(1) + '×</b>)</span>');
   }
   document.getElementById('stats').innerHTML = bits.join('');
-})();
+}
 
 /* ---------- layouts ---------- */
 function layeredLayout(nodes, edges, colOf, W, H) {
@@ -317,6 +316,7 @@ function draw() {
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.fillStyle = tok('--surface-1'); g.fillRect(0, 0, W, H);
+  if (!DATA) return; // playground before the first Run
   g.save(); g.translate(view.tx, view.ty); g.scale(view.k, view.k);
   if (mode === 'mw') drawMultiway(g, W, H);
   else if (mode === 'ca') drawCausal(g, W, H);
@@ -581,9 +581,13 @@ function setMode(m) {
   cv.setAttribute('aria-label', canvasLabel());
   legend(); updateHash(); requestDraw();
 }
-tabMw.onclick = () => setMode('mw');
-if (DATA.causal) tabCa.onclick = () => setMode('ca'); else tabCa.style.display = 'none';
-if (hasTeg) tabTe.onclick = () => setMode('te'); else tabTe.style.display = 'none';
+tabMw.onclick = () => { if (DATA) setMode('mw'); };
+tabCa.onclick = () => { if (DATA && DATA.causal) setMode('ca'); };
+tabTe.onclick = () => { if (DATA && hasTeg) setMode('te'); };
+function applyTabAvailability() {
+  tabCa.style.display = DATA && DATA.causal ? '' : 'none';
+  tabTe.style.display = DATA && hasTeg ? '' : 'none';
+}
 function availableModes() {
   const ms = ['mw'];
   if (DATA.causal) ms.push('ca');
@@ -616,7 +620,6 @@ function legend() {
 
 /* ---------- evolution scrubber (feature A) ---------- */
 const playBtn = document.getElementById('playBtn'), scrub = document.getElementById('scrub'), stepLabel = document.getElementById('stepLabel');
-scrub.max = maxStep; scrub.value = maxStep;
 let playing = false, lastAdv = 0;
 function setStep(v) {
   currentStep = Math.max(0, Math.min(maxStep, v));
@@ -726,6 +729,7 @@ function walkSelection(dir) {
   inspect(selected); updateHash(); requestDraw();
 }
 window.addEventListener('keydown', e => {
+  if (!DATA) return;
   const t = e.target, tag = t && t.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -849,10 +853,38 @@ function inspect(id) {
 
 /* ---------- boot ---------- */
 function boot() { computeLayouts(); legend(); requestDraw(); }
+
+/* Load (or re-load) a data bundle: reset selection, view, scrubber,
+   tab availability, then re-render everything. The playground calls
+   this once per Run; --html pages call it once at boot. */
+function loadData(data) {
+  DATA = data;
+  MW = DATA.multiway;
+  TEG = DATA.teg;
+  hasTeg = !!(TEG && ((TEG.causal && TEG.causal.length) || (TEG.branchialEvents && TEG.branchialEvents.length)));
+  merged = MW.backMerges > 0; // walk counts are meaningless in a merged DAG
+  maxStep = MW.layers.length - 1;
+  selected = null; hover = null;
+  view.k = 1; view.tx = 0; view.ty = 0;
+  stopPlay();
+  scrub.max = maxStep; scrub.value = maxStep;
+  renderHeader();
+  applyTabAvailability();
+  setMode('mw');
+  boot();
+  setStep(maxStep);
+  cv.setAttribute('aria-label', canvasLabel());
+  if (!restoreHash()) {
+    // pre-select a mid-depth state so the inspector isn't empty on load
+    const mid = MW.layers[Math.min(2, maxStep)];
+    if (mid && mid.length) { selected = mid[0]; inspect(selected); updateHash(); requestDraw(); }
+  }
+}
 let resizeTimer = 0;
 window.addEventListener('resize', () => { // debounced: re-layout AND refresh the inspector
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    if (!DATA) return;
     boot();
     if (selected !== null) inspect(selected);
   }, 150);
@@ -863,14 +895,7 @@ if (window.matchMedia) { // OS scheme changes restyle in auto mode; harmless whe
     if (selected !== null) inspect(selected);
   });
 }
-boot();
-setStep(maxStep);
-cv.setAttribute('aria-label', canvasLabel());
-if (!restoreHash()) {
-  // pre-select a mid-depth state so the inspector isn't empty on load
-  const mid = MW.layers[Math.min(2, maxStep)];
-  if (mid && mid.length) { selected = mid[0]; inspect(selected); updateHash(); requestDraw(); }
-}
+if (BOOT_DATA) loadData(BOOT_DATA);
 </script>
 </body>
 </html>
