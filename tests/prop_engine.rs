@@ -89,60 +89,55 @@ fn prop_branchial_exact() {
         let (rule, init, steps) = random_system(rng);
         let mw = evolve(&rule, init, steps);
 
-        let max_step = mw.layers.len() - 1;
-        let mut expected: Vec<(usize, usize)> = Vec::new();
-        for step in 1..=max_step {
-            let mut by_from: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-            for e in mw.events.iter().filter(|e| e.step == step) {
-                let children = by_from.entry(e.from).or_default();
-                if !children.contains(&e.to) {
-                    children.push(e.to);
-                }
-            }
-            let mut step_pairs: Vec<(usize, usize)> = Vec::new();
-            for children in by_from.values() {
-                for i in 0..children.len() {
-                    for j in (i + 1)..children.len() {
-                        let a = children[i].min(children[j]);
-                        let b = children[i].max(children[j]);
-                        step_pairs.push((a, b));
-                    }
-                }
-            }
-            step_pairs.sort_unstable();
-            step_pairs.dedup();
-            expected.extend(step_pairs);
-        }
-        assert_eq!(mw.branchial, expected);
+        assert_eq!(mw.branchial(), oracle_branchial(&mw));
     });
 }
 
-/// The lazy-branchial transition pin: the derived method must equal the
-/// stored vector EXACTLY (byte-identical export is the point). Random
-/// systems don't guarantee back-merge coverage per run, so the reversal
-/// fixture below covers that corner explicitly.
+/// Back-merge fixture: reversal on a 2-chain merges into EARLIER
+/// layers; the derived branchial must still match the independent
+/// oracle exactly (random_system doesn't guarantee back-merge coverage
+/// per run, so this corner is pinned explicitly).
 #[test]
-fn prop_branchial_method_equals_stored() {
-    prop(SEED ^ 7, "prop_branchial_method_equals_stored", |rng, _| {
-        let (rule, init, steps) = random_system(rng);
-        let mw = evolve(&rule, init, steps);
-        assert_eq!(mw.branchial(), mw.branchial);
-    });
-}
-
-/// Back-merge fixture: reversal on a 2-chain merges into EARLIER layers;
-/// the derived branchial must still match the stored vector exactly.
-#[test]
-fn branchial_method_equals_stored_with_back_merges() {
+fn branchial_back_merge_fixture() {
     let rule = parse_rule("{{x,y}}->{{y,x}}").unwrap();
     let init = parse_state("{{0,1},{1,2}}").unwrap();
     let mw = evolve(&rule, init, 4);
     assert!(mw.back_merges > 0, "fixture must actually back-merge");
-    assert_eq!(mw.branchial(), mw.branchial);
-    assert!(
-        !mw.branchial.is_empty(),
-        "fixture must have branchial pairs"
-    );
+    let derived = mw.branchial();
+    assert!(!derived.is_empty(), "fixture must have branchial pairs");
+    assert_eq!(derived, oracle_branchial(&mw));
+}
+
+/// The independent BTreeMap oracle (kept deliberately DIFFERENT in
+/// construction from `MultiwaySystem::branchial`'s sequential pass —
+/// that's what keeps `prop_branchial_exact` non-circular now that the
+/// method IS the only branchial source).
+fn oracle_branchial(mw: &MultiwaySystem) -> Vec<(usize, usize)> {
+    let max_step = mw.layers.len() - 1;
+    let mut expected: Vec<(usize, usize)> = Vec::new();
+    for step in 1..=max_step {
+        let mut by_from: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for e in mw.events.iter().filter(|e| e.step == step) {
+            let children = by_from.entry(e.from).or_default();
+            if !children.contains(&e.to) {
+                children.push(e.to);
+            }
+        }
+        let mut step_pairs: Vec<(usize, usize)> = Vec::new();
+        for children in by_from.values() {
+            for i in 0..children.len() {
+                for j in (i + 1)..children.len() {
+                    let a = children[i].min(children[j]);
+                    let b = children[i].max(children[j]);
+                    step_pairs.push((a, b));
+                }
+            }
+        }
+        step_pairs.sort_unstable();
+        step_pairs.dedup();
+        expected.extend(step_pairs);
+    }
+    expected
 }
 
 /// The flagship correctness property: when nothing back-merges, per-layer

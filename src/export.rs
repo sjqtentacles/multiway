@@ -72,7 +72,7 @@ pub fn multiway_json(mw: &MultiwaySystem) -> String {
         })
         .collect();
     let branchial: Vec<String> = mw
-        .branchial
+        .branchial()
         .iter()
         .map(|(a, b)| format!("[{},{}]", a, b))
         .collect();

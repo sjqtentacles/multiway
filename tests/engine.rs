@@ -83,7 +83,7 @@ fn multiway_layer_counts_hand_verified() {
     assert_eq!(tree_nodes, vec![1, 1, 2, 6]);
 
     // Two same-parent step-2 siblings -> at least one branchial pair.
-    assert!(!mw.branchial.is_empty());
+    assert!(!mw.branchial().is_empty());
     assert_eq!(mw.back_merges, 0);
 }
 

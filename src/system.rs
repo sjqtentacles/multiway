@@ -104,8 +104,6 @@ pub struct MultiwaySystem {
     pub event_tokens: Vec<EventTokens>,
     /// States first reached at each step (`layers[0]` holds the initial state).
     pub layers: Vec<Vec<usize>>,
-    /// Branchial pairs: same-step sibling states produced from a common parent.
-    pub branchial: Vec<(usize, usize)>,
     /// Events that merged into a state first reached at an *earlier* step.
     /// If nonzero, `path_counts` no longer aligns with the naive evolution
     /// tree: it counts walks in the merged DAG, which can over- OR
@@ -134,7 +132,7 @@ pub struct EvolveStats {
     /// wasm where no runtime clock exists): Phase A fan-out
     /// (apply + canonicalize).
     pub phase_a_ns: u128,
-    /// Phase B serial bookkeeping (dedup, ids, tokens, branchial).
+    /// Phase B serial bookkeeping (dedup, ids, tokens).
     pub phase_b_ns: u128,
     /// Phase C fan-out (match maintenance for the new layer).
     pub phase_c_ns: u128,
@@ -192,8 +190,8 @@ pub fn evolve(rule: &Rule, init: State, steps: usize) -> MultiwaySystem {
 /// - **Phase A** fans the pure per-match work (`apply_full` and
 ///   `canonicalize`) across scoped workers on round-robin frontier
 ///   indices, collected by index;
-/// - **Phase B** replays the bookkeeping (dedup, event ids, tokens,
-///   branchial) serially in `(frontier, match)` order — a pure function
+/// - **Phase B** replays the bookkeeping (dedup, event ids, tokens)
+///   serially in `(frontier, match)` order — a pure function
 ///   of the index-sorted Phase A results, so the output cannot depend on
 ///   thread timing;
 /// - **Phase C** fans out `delta_matches` for the new layer the same way.
@@ -204,14 +202,12 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
     // wasm — safe everywhere.
     let profile = std::env::var("MULTIWAY_PROFILE").is_ok();
     let mut prof_lookup_ns: u128 = 0;
-    let mut prof_branchial_ns: u128 = 0;
     let steps = opts.steps;
     let mut mw = MultiwaySystem {
         states: Vec::new(),
         events: Vec::new(),
         event_tokens: Vec::new(),
         layers: Vec::new(),
-        branchial: Vec::new(),
         back_merges: 0,
         stats: EvolveStats::default(),
         store: EdgeStore::default(),
@@ -238,7 +234,6 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
     let mut frontier: Vec<(usize, Vec<Match>)> = vec![(0, init_matches)];
     for step in 1..=steps {
         let mut new_layer: Vec<usize> = Vec::new();
-        let mut branch_pairs: Vec<(usize, usize)> = Vec::new();
 
         // Phase A: pure per-match work, optionally parallel.
         let t = ProfTimer::start();
@@ -252,7 +247,6 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
         let mut pending: Vec<(usize, usize, usize)> = Vec::new();
         for (fi, (sid, matches)) in frontier.iter().enumerate() {
             let sid = *sid;
-            let mut children: Vec<usize> = Vec::new();
 
             for (mi, _m) in matches.iter().enumerate() {
                 let tokens = expanded[fi][mi].tokens.take().unwrap();
@@ -317,31 +311,9 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
                     step,
                 });
                 mw.event_tokens.push(tokens);
-                if !children.contains(&cid) {
-                    children.push(cid);
-                }
-            }
-
-            for i in 0..children.len() {
-                for j in (i + 1)..children.len() {
-                    let a = children[i].min(children[j]);
-                    let b = children[i].max(children[j]);
-                    branch_pairs.push((a, b));
-                }
             }
         }
 
-        let brt = if profile {
-            Some(ProfTimer::start())
-        } else {
-            None
-        };
-        branch_pairs.sort_unstable();
-        branch_pairs.dedup();
-        mw.branchial.extend(branch_pairs);
-        if let Some(brt) = brt {
-            prof_branchial_ns += brt.elapsed_ns();
-        }
         mw.layers.push(new_layer);
         mw.stats.phase_b_ns += t.elapsed_ns();
 
@@ -379,13 +351,12 @@ pub fn evolve_opts(rule: &Rule, init: State, opts: &EvolveOpts) -> MultiwaySyste
     if profile {
         eprintln!(
             "PROFILE phases: a={}ms b={}ms c={}ms drop={}ms | phase-b buckets: \
-             lookup+intern={}ms branchial={}ms",
+             lookup+intern={}ms",
             mw.stats.phase_a_ns / 1_000_000,
             mw.stats.phase_b_ns / 1_000_000,
             mw.stats.phase_c_ns / 1_000_000,
             mw.stats.drop_ns / 1_000_000,
             prof_lookup_ns / 1_000_000,
-            prof_branchial_ns / 1_000_000,
         );
     }
     mw

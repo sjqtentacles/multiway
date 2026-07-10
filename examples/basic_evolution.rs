@@ -21,6 +21,6 @@ fn main() {
         "{} states, {} events, {} branchial pairs",
         mw.states.len(),
         mw.events.len(),
-        mw.branchial.len()
+        mw.branchial().len()
     );
 }

@@ -110,7 +110,7 @@ pub fn render_summary(mw: &MultiwaySystem) -> String {
         "canonical states {}   events {}   branchial pairs {}   back-merges {}\n",
         group_digits(mw.states.len() as u128),
         group_digits(mw.events.len() as u128),
-        group_digits(mw.branchial.len() as u128),
+        group_digits(mw.branchial().len() as u128),
         mw.back_merges
     )
 }
