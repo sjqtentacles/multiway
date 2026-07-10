@@ -40,6 +40,7 @@
 
 #![deny(missing_docs)]
 
+pub mod atlas;
 pub mod canon;
 pub mod causal;
 pub mod confluence;
@@ -52,6 +53,7 @@ pub mod probe;
 pub mod report;
 pub mod rule;
 pub mod rulespace;
+pub mod scan;
 pub mod stats;
 pub mod store;
 pub mod system;
